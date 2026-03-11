@@ -1,0 +1,17 @@
+# Binary
+span-collector
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config with secrets (default config is generated at runtime)
+config.yml
+ca.pem
+*.pem
