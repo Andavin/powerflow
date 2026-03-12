@@ -8,13 +8,14 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
-const version = "3.1.0"
+const version = "4.0.0"
 
 func main() {
 	cfgPath := flag.String("config", "/config/config.yml", "path to YAML config file")
@@ -52,9 +53,8 @@ func main() {
 		"client_id", cfg.MQTT.ClientID,
 		"device_id", cfg.Span.DeviceID,
 		"subscribe", cfg.Span.SubscribeTopic(),
-		"interval", cfg.Snapshot.Interval,
-		"output_topic", cfg.Snapshot.OutputTopic,
-		"per_circuit", cfg.Snapshot.PerCircuitTopic,
+		"write_interval", cfg.QuestDB.WriteInterval,
+		"questdb", fmt.Sprintf("%s:%d", cfg.QuestDB.Host, cfg.QuestDB.ILPPort),
 		"tls", cfg.MQTT.CACert != "",
 		"log_level", cfg.Logging.Level,
 	)
@@ -88,18 +88,47 @@ func main() {
 		os.Exit(1)
 	}
 
-	// ---- Publisher ----------------------------------------------------
-	pub := NewPublisher(client, state, cfg.Snapshot, logger)
+	// ---- QuestDB ------------------------------------------------------
+	qdbWriter, err := NewQuestDBWriter(cfg.QuestDB, cfg.Span.DeviceID, logger)
+	if err != nil {
+		logger.Error("failed to connect to QuestDB", "error", err)
+		os.Exit(1)
+	}
+
+	if cfg.QuestDB.CreateTables {
+		if err := qdbWriter.CreateTables(); err != nil {
+			logger.Error("failed to create QuestDB tables", "error", err)
+			os.Exit(1)
+		}
+	}
+
+	energyTracker := NewEnergyTracker(logger)
+
+	// Writer goroutine — keeps QuestDB writes off the main loop so
+	// MQTT message reception is never blocked by ILP flushes.
+	// Buffer absorbs bursts; blocking send ensures no tick is ever dropped.
+	snapCh := make(chan struct{}, 16)
+	var writerWg sync.WaitGroup
+	writerWg.Add(1)
+	go func() {
+		defer writerWg.Done()
+		for range snapCh {
+			deltas := energyTracker.Process(state)
+			if err := qdbWriter.WriteSnapshot(state, deltas); err != nil {
+				logger.Error("QuestDB write failed", "error", err)
+			}
+		}
+	}()
 
 	// ---- Signal handling ----------------------------------------------
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	// ---- Snapshot loop ------------------------------------------------
-	ticker := time.NewTicker(cfg.Snapshot.parsed)
+	ticker := time.NewTicker(cfg.QuestDB.parsed)
 	defer ticker.Stop()
 
-	var snapCount, errCount uint64
+	var snapCount uint64
 
 	logger.Info("snapshot loop started — send SIGINT/SIGTERM to stop")
 
@@ -112,20 +141,10 @@ func main() {
 				continue
 			}
 
-			published, err := pub.PublishSnapshot()
-			if err != nil {
-				errCount++
-				logger.Error("snapshot failed",
-					"error", err,
-					"total_errors", errCount,
-				)
-				continue
-			}
-
+			snapCh <- struct{}{}
 			snapCount++
-			logger.Info("snapshot published",
+			logger.Info("snapshot queued",
 				"cycle", snapCount,
-				"published", published,
 				"nodes", nodeCount,
 				"circuits", circuitCount,
 				"msgs_received", msgCount,
@@ -136,8 +155,10 @@ func main() {
 			logger.Info("shutting down",
 				"signal", sig,
 				"total_snapshots", snapCount,
-				"total_errors", errCount,
 			)
+			close(snapCh)
+			writerWg.Wait()
+			qdbWriter.Close()
 			client.Disconnect(1000)
 			logger.Info("shutdown complete")
 			return

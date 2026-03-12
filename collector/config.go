@@ -15,10 +15,10 @@ import (
 // ---------------------------------------------------------------------------
 
 type Config struct {
-	MQTT     MQTTConfig     `yaml:"mqtt"`
-	Span     SpanConfig     `yaml:"span"`
-	Snapshot SnapshotConfig `yaml:"snapshot"`
-	Logging  LoggingConfig  `yaml:"logging"`
+	MQTT    MQTTConfig    `yaml:"mqtt"`
+	Span    SpanConfig    `yaml:"span"`
+	QuestDB QuestDBConfig `yaml:"questdb"`
+	Logging LoggingConfig `yaml:"logging"`
 }
 
 type MQTTConfig struct {
@@ -43,22 +43,20 @@ type SpanConfig struct {
 	DeviceID    string `yaml:"device_id"`
 }
 
-// SubscribeTopic returns the wildcard MQTT topic for subscribing.
 func (s *SpanConfig) SubscribeTopic() string {
 	return s.TopicPrefix + "/" + s.DeviceID + "/#"
 }
 
-// TopicBase returns the topic prefix including the device ID.
 func (s *SpanConfig) TopicBase() string {
 	return s.TopicPrefix + "/" + s.DeviceID + "/"
 }
 
-type SnapshotConfig struct {
-	Interval        string `yaml:"interval"`
-	OutputTopic     string `yaml:"output_topic"`
-	PerCircuitTopic bool   `yaml:"per_circuit_topics"`
-	QoS             byte   `yaml:"qos"`
-	Retain          bool   `yaml:"retain"`
+type QuestDBConfig struct {
+	Host          string `yaml:"host"`
+	ILPPort       int    `yaml:"ilp_port"`
+	HTTPPort      int    `yaml:"http_port"`
+	CreateTables  bool   `yaml:"create_tables"`
+	WriteInterval string `yaml:"write_interval"`
 
 	parsed time.Duration
 }
@@ -76,10 +74,10 @@ const defaultConfigYAML = `# ===================================================
 # SPAN Panel Data Collector — Configuration
 # ============================================================
 # Subscribes to SPAN panel MQTT topics (Homie 5.0 convention),
-# periodically snapshots the full state, and publishes structured
-# JSON to an output topic for time-series logging.
+# periodically snapshots the full state, and writes structured
+# time-series data to QuestDB.
 
-# MQTT broker connection (used for both subscribing and publishing)
+# MQTT broker connection (subscribes to SPAN panel data)
 mqtt:
   server: "mqtt.example.com"
   port: 8883
@@ -97,17 +95,19 @@ span:
   # SPAN panel device ID (serial number)
   device_id: "REPLACE-WITH-YOUR-PANEL-SERIAL"
 
-# Periodic snapshot settings
-snapshot:
-  # How often to capture and publish a full state snapshot
-  # Go duration format: "5s", "30s", "1m", etc.
-  interval: "5s"
-  # MQTT topic for published snapshots
-  output_topic: "span-stats/snapshot"
-  # Also publish each circuit individually to span-stats/circuit/{circuit-name}
-  per_circuit_topics: true
-  qos: 1
-  retain: true
+# QuestDB time-series database
+questdb:
+  # QuestDB host (ILP and HTTP endpoints must be on the same host)
+  host: "127.0.0.1"
+  # ILP (InfluxDB Line Protocol) port — fast binary ingestion
+  ilp_port: 9009
+  # HTTP API port — used for DDL (table creation) only
+  http_port: 9000
+  # Auto-create tables on startup (PARTITION BY DAY, WAL, DEDUP)
+  create_tables: true
+  # How often to snapshot state and write to QuestDB
+  # Go duration format: "1s", "5s", "30s", "1m", etc.
+  write_interval: "5s"
 
 # Logging
 logging:
@@ -121,8 +121,6 @@ logging:
   format: "text"
 `
 
-// WriteDefaultConfig writes the default annotated config to the given path,
-// creating parent directories as needed.
 func WriteDefaultConfig(path string) error {
 	dir := path[:max(0, strings.LastIndex(path, "/"))]
 	if dir != "" {
@@ -152,12 +150,12 @@ func LoadConfig(path string) (*Config, error) {
 		Span: SpanConfig{
 			TopicPrefix: "ebus/5",
 		},
-		Snapshot: SnapshotConfig{
-			Interval:        "5s",
-			OutputTopic:     "span-stats/snapshot",
-			PerCircuitTopic: true,
-			QoS:             1,
-			Retain:          true,
+		QuestDB: QuestDBConfig{
+			Host:          "127.0.0.1",
+			ILPPort:       9009,
+			HTTPPort:      9000,
+			CreateTables:  true,
+			WriteInterval: "5s",
 		},
 		Logging: LoggingConfig{
 			Level:  "info",
@@ -169,11 +167,11 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 
-	dur, err := time.ParseDuration(cfg.Snapshot.Interval)
+	dur, err := time.ParseDuration(cfg.QuestDB.WriteInterval)
 	if err != nil {
-		return nil, fmt.Errorf("invalid snapshot.interval %q: %w", cfg.Snapshot.Interval, err)
+		return nil, fmt.Errorf("invalid questdb.write_interval %q: %w", cfg.QuestDB.WriteInterval, err)
 	}
-	cfg.Snapshot.parsed = dur
+	cfg.QuestDB.parsed = dur
 
 	return cfg, cfg.validate()
 }
@@ -191,19 +189,22 @@ func (c *Config) validate() error {
 	if c.Span.DeviceID == "" {
 		return fmt.Errorf("span.device_id is required")
 	}
-	if c.Snapshot.parsed < 100*time.Millisecond {
-		return fmt.Errorf("snapshot.interval must be >= 100ms")
-	}
-	if c.Snapshot.OutputTopic == "" {
-		return fmt.Errorf("snapshot.output_topic is required")
-	}
-	if c.Snapshot.QoS > 2 {
-		return fmt.Errorf("snapshot.qos must be 0, 1, or 2")
-	}
 	if c.MQTT.CACert != "" {
 		if _, err := os.Stat(c.MQTT.CACert); err != nil {
 			return fmt.Errorf("mqtt.ca_cert not readable: %w", err)
 		}
+	}
+	if c.QuestDB.Host == "" {
+		return fmt.Errorf("questdb.host is required")
+	}
+	if c.QuestDB.ILPPort < 1 || c.QuestDB.ILPPort > 65535 {
+		return fmt.Errorf("questdb.ilp_port must be 1-65535")
+	}
+	if c.QuestDB.HTTPPort < 1 || c.QuestDB.HTTPPort > 65535 {
+		return fmt.Errorf("questdb.http_port must be 1-65535")
+	}
+	if c.QuestDB.parsed < 100*time.Millisecond {
+		return fmt.Errorf("questdb.write_interval must be >= 100ms")
 	}
 	return nil
 }

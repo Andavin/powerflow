@@ -59,6 +59,7 @@ type State struct {
 	deviceID    string
 	description *DeviceDescription
 	values      map[string]map[string]interface{} // node → property → value
+	nodeUpdated map[string]time.Time              // node → last MQTT arrival time
 	lastUpdate  time.Time
 	msgCount    uint64
 	logger      *slog.Logger
@@ -66,9 +67,10 @@ type State struct {
 
 func NewState(deviceID string, logger *slog.Logger) *State {
 	return &State{
-		deviceID: deviceID,
-		values:   make(map[string]map[string]interface{}),
-		logger:   logger.With("component", "state"),
+		deviceID:    deviceID,
+		values:      make(map[string]map[string]interface{}),
+		nodeUpdated: make(map[string]time.Time),
+		logger:      logger.With("component", "state"),
 	}
 }
 
@@ -109,73 +111,11 @@ func (s *State) Update(node, property string, payload []byte) {
 		s.values[node] = make(map[string]interface{})
 	}
 
+	now := time.Now()
 	s.values[node][property] = s.parseValue(node, property, payload)
-	s.lastUpdate = time.Now()
+	s.nodeUpdated[node] = now
+	s.lastUpdate = now
 	s.msgCount++
-}
-
-// Snapshot creates a structured copy of the current state for publishing.
-func (s *State) Snapshot() map[string]interface{} {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	snap := map[string]interface{}{
-		"timestamp": time.Now().UTC().Format(time.RFC3339Nano),
-		"device_id": s.deviceID,
-	}
-
-	circuits := make(map[string]interface{})
-
-	for node, props := range s.values {
-		propsCopy := copyMap(props)
-
-		if outKey, isKnown := knownNodes[node]; isKnown {
-			snap[outKey] = propsCopy
-		} else {
-			// Circuit node — key by human-readable name
-			circuitKey := node
-			if name, ok := props["name"]; ok {
-				if nameStr, ok := name.(string); ok && nameStr != "" {
-					circuitKey = nameStr
-				}
-			}
-			propsCopy["circuit_id"] = node
-			circuits[circuitKey] = propsCopy
-		}
-	}
-
-	if len(circuits) > 0 {
-		snap["circuits"] = circuits
-	}
-
-	return snap
-}
-
-// CircuitSnapshots returns a map of circuit_name → properties (only circuits).
-func (s *State) CircuitSnapshots() map[string]map[string]interface{} {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	ts := time.Now().UTC().Format(time.RFC3339Nano)
-	result := make(map[string]map[string]interface{})
-
-	for node, props := range s.values {
-		if _, isKnown := knownNodes[node]; isKnown {
-			continue
-		}
-		circuitKey := node
-		if name, ok := props["name"]; ok {
-			if nameStr, ok := name.(string); ok && nameStr != "" {
-				circuitKey = nameStr
-			}
-		}
-		entry := copyMap(props)
-		entry["circuit_id"] = node
-		entry["device_id"] = s.deviceID
-		entry["timestamp"] = ts
-		result[circuitKey] = entry
-	}
-	return result
 }
 
 // Stats returns counters for logging.
@@ -190,6 +130,54 @@ func (s *State) Stats() (msgCount uint64, nodeCount int, circuitCount int, lastU
 		}
 	}
 	return s.msgCount, len(s.values), circuits, s.lastUpdate
+}
+
+// IsDescribedNode reports whether the node exists in the Homie $description.
+// Returns false if no description has been loaded yet.
+func (s *State) IsDescribedNode(nodeID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.description == nil {
+		return false
+	}
+	_, ok := s.description.Nodes[nodeID]
+	return ok
+}
+
+// HasDescription reports whether the Homie $description has been loaded.
+func (s *State) HasDescription() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.description != nil
+}
+
+// NodeLastUpdate returns the MQTT arrival time of the most recent message for a node.
+func (s *State) NodeLastUpdate(nodeID string) time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.nodeUpdated[nodeID]
+}
+
+// Nodes returns all node IDs currently in state.
+func (s *State) Nodes() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	nodes := make([]string, 0, len(s.values))
+	for n := range s.values {
+		nodes = append(nodes, n)
+	}
+	return nodes
+}
+
+// NodeValues returns a copy of all property values for a given node.
+func (s *State) NodeValues(node string) map[string]interface{} {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	props, ok := s.values[node]
+	if !ok {
+		return nil
+	}
+	return copyMap(props)
 }
 
 // ---------------------------------------------------------------------------
