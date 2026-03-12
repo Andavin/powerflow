@@ -140,7 +140,10 @@ func LoadConfig(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
+	return ParseConfig(data)
+}
 
+func ParseConfig(data []byte) (*Config, error) {
 	cfg := &Config{
 		MQTT: MQTTConfig{
 			Server:   "127.0.0.1",

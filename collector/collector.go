@@ -40,37 +40,36 @@ func (c *Collector) Subscribe() error {
 	return nil
 }
 
-func (c *Collector) onMessage(_ mqtt.Client, msg mqtt.Message) {
-	topic := msg.Topic()
-	payload := msg.Payload()
+// topicResult describes the parsed outcome of an MQTT topic.
+type topicResult struct {
+	Node        string // non-empty for data topics
+	Property    string // non-empty for data topics
+	Special     string // "$state", "$description", etc. — non-empty for Homie system topics
+	Ignored     bool   // true if the topic should be silently dropped
+	NoPrefix    bool   // true if the topic didn't match the base prefix
+	NoSlash     bool   // true if the rest had no slash (not a node/property pair)
+}
 
-	if !strings.HasPrefix(topic, c.topicBase) {
-		return
+// parseTopic extracts the node and property from a full MQTT topic
+// relative to the expected topicBase prefix. It classifies Homie $-topics
+// and filters topics that should not produce state updates.
+func parseTopic(topicBase, fullTopic string) topicResult {
+	if !strings.HasPrefix(fullTopic, topicBase) {
+		return topicResult{NoPrefix: true}
 	}
-	rest := topic[len(c.topicBase):]
+	rest := fullTopic[len(topicBase):]
 
-	// Handle Homie special topics
-	if rest == "$state" {
-		c.logger.Debug("device state update", "state", string(payload))
-		return
+	// Homie special topics at device level
+	if rest == "$state" || rest == "$description" {
+		return topicResult{Special: rest}
 	}
-	if rest == "$description" {
-		c.logger.Debug("received $description", "bytes", len(payload))
-		if err := c.state.SetDescription(payload); err != nil {
-			c.logger.Error("failed to parse $description", "error", err)
-		}
-		return
-	}
-	// Skip other $ topics ($extensions, $children, etc.)
 	if strings.HasPrefix(rest, "$") {
-		return
+		return topicResult{Ignored: true}
 	}
 
-	// Parse node/property from "node/property"
 	slash := strings.IndexByte(rest, '/')
 	if slash < 0 {
-		c.logger.Debug("skipping non-property topic", "suffix", rest)
-		return
+		return topicResult{NoSlash: true}
 	}
 
 	node := rest[:slash]
@@ -78,14 +77,42 @@ func (c *Collector) onMessage(_ mqtt.Client, msg mqtt.Message) {
 
 	// Skip nested $ topics under nodes
 	if strings.HasPrefix(property, "$") {
+		return topicResult{Ignored: true}
+	}
+
+	return topicResult{Node: node, Property: property}
+}
+
+func (c *Collector) onMessage(_ mqtt.Client, msg mqtt.Message) {
+	topic := msg.Topic()
+	payload := msg.Payload()
+
+	result := parseTopic(c.topicBase, topic)
+
+	if result.NoPrefix || result.Ignored || result.NoSlash {
+		if result.NoSlash {
+			c.logger.Debug("skipping non-property topic", "suffix", topic[len(c.topicBase):])
+		}
 		return
 	}
 
-	c.state.Update(node, property, payload)
+	if result.Special == "$state" {
+		c.logger.Debug("device state update", "state", string(payload))
+		return
+	}
+	if result.Special == "$description" {
+		c.logger.Debug("received $description", "bytes", len(payload))
+		if err := c.state.SetDescription(payload); err != nil {
+			c.logger.Error("failed to parse $description", "error", err)
+		}
+		return
+	}
+
+	c.state.Update(result.Node, result.Property, payload)
 
 	c.logger.Debug("state updated",
-		"node", node,
-		"property", property,
+		"node", result.Node,
+		"property", result.Property,
 		"value", string(payload),
 	)
 }

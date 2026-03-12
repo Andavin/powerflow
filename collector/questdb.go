@@ -341,9 +341,10 @@ func (q *QuestDBWriter) flushPending(state *State) {
 	q.pending = nil
 }
 
-func (q *QuestDBWriter) writeRow(table string, extraSymbols map[string]string, props map[string]interface{}, ts time.Time) {
+// buildRowLine builds an ILP line for a system/circuit node row.
+func buildRowLine(table, deviceID string, extraSymbols map[string]string, props map[string]interface{}, ts time.Time) string {
 	line := newILP(table)
-	line.tag("device_id", q.deviceID)
+	line.tag("device_id", deviceID)
 
 	for k, v := range extraSymbols {
 		line.tag(k, v)
@@ -374,32 +375,29 @@ func (q *QuestDBWriter) writeRow(table string, extraSymbols map[string]string, p
 		}
 	}
 
-	if s := line.at(ts); s != "" {
-		q.buf.WriteString(s)
-	}
+	return line.at(ts)
 }
 
-func (q *QuestDBWriter) writeUnknownNode(nodeID string, props map[string]interface{}, ts time.Time) {
+// buildUnknownNodeLine builds an ILP line for an unknown/unrecognised node.
+func buildUnknownNodeLine(deviceID, nodeID string, props map[string]interface{}, ts time.Time) (string, error) {
 	jsonBytes, err := json.Marshal(props)
 	if err != nil {
-		q.logger.Error("failed to marshal unknown node", "node", nodeID, "error", err)
-		return
+		return "", fmt.Errorf("marshal unknown node %s: %w", nodeID, err)
 	}
 
 	line := newILP("unknown_topics")
-	line.tag("device_id", q.deviceID)
+	line.tag("device_id", deviceID)
 	line.tag("node_id", nodeID)
 	line.strF("properties", string(jsonBytes))
 	line.intF("property_count", int64(len(props)))
 
-	if s := line.at(ts); s != "" {
-		q.buf.WriteString(s)
-	}
+	return line.at(ts), nil
 }
 
-func (q *QuestDBWriter) writeEnergyDelta(d *EnergyDelta, ts time.Time) {
+// buildEnergyDeltaLine builds an ILP line for a power_usage row.
+func buildEnergyDeltaLine(deviceID string, d *EnergyDelta, ts time.Time) string {
 	line := newILP("power_usage")
-	line.tag("device_id", q.deviceID)
+	line.tag("device_id", deviceID)
 	line.tag("node_id", d.NodeID)
 	line.tag("node_type", d.NodeType)
 	line.tag("name", d.Name)
@@ -409,7 +407,28 @@ func (q *QuestDBWriter) writeEnergyDelta(d *EnergyDelta, ts time.Time) {
 	line.floatF("avg_import_w", d.AvgImportW)
 	line.floatF("avg_export_w", d.AvgExportW)
 
-	if s := line.at(ts); s != "" {
+	return line.at(ts)
+}
+
+func (q *QuestDBWriter) writeRow(table string, extraSymbols map[string]string, props map[string]interface{}, ts time.Time) {
+	if s := buildRowLine(table, q.deviceID, extraSymbols, props, ts); s != "" {
+		q.buf.WriteString(s)
+	}
+}
+
+func (q *QuestDBWriter) writeUnknownNode(nodeID string, props map[string]interface{}, ts time.Time) {
+	s, err := buildUnknownNodeLine(q.deviceID, nodeID, props, ts)
+	if err != nil {
+		q.logger.Error("failed to marshal unknown node", "node", nodeID, "error", err)
+		return
+	}
+	if s != "" {
+		q.buf.WriteString(s)
+	}
+}
+
+func (q *QuestDBWriter) writeEnergyDelta(d *EnergyDelta, ts time.Time) {
+	if s := buildEnergyDeltaLine(q.deviceID, d, ts); s != "" {
 		q.buf.WriteString(s)
 	}
 }

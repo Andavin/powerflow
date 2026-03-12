@@ -1,0 +1,321 @@
+package main
+
+import (
+	"fmt"
+	"math"
+	"math/rand"
+	"testing"
+	"time"
+)
+
+func TestGetFloat(t *testing.T) {
+	tests := []struct {
+		name  string
+		props map[string]interface{}
+		key   string
+		want  float64
+		ok    bool
+	}{
+		{"float64 value", map[string]interface{}{"e": 3.14}, "e", 3.14, true},
+		{"int64 value", map[string]interface{}{"e": int64(42)}, "e", 42.0, true},
+		{"missing key", map[string]interface{}{"other": 1.0}, "e", 0, false},
+		{"string value", map[string]interface{}{"e": "hello"}, "e", 0, false},
+		{"bool value", map[string]interface{}{"e": true}, "e", 0, false},
+		{"zero float", map[string]interface{}{"e": 0.0}, "e", 0.0, true},
+		{"negative int", map[string]interface{}{"e": int64(-100)}, "e", -100.0, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := getFloat(tt.props, tt.key)
+			if ok != tt.ok {
+				t.Errorf("ok = %v, want %v", ok, tt.ok)
+			}
+			if got != tt.want {
+				t.Errorf("value = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEnergyTrackerFirstCallBaseline(t *testing.T) {
+	s := NewState("dev-1", testLogger())
+	tracker := NewEnergyTracker(testLogger())
+
+	s.Update("lugs-upstream", "imported-energy", []byte("100.0"))
+	s.Update("lugs-upstream", "exported-energy", []byte("50.0"))
+
+	deltas := tracker.Process(s)
+	if len(deltas) != 0 {
+		t.Errorf("first call should return no deltas, got %d", len(deltas))
+	}
+}
+
+func TestEnergyTrackerSecondCallDelta(t *testing.T) {
+	s := NewState("dev-1", testLogger())
+	tracker := NewEnergyTracker(testLogger())
+
+	// First reading — baseline
+	s.Update("lugs-upstream", "imported-energy", []byte("100.0"))
+	s.Update("lugs-upstream", "exported-energy", []byte("50.0"))
+	tracker.Process(s)
+
+	// Wait a tiny bit to ensure timestamp difference
+	time.Sleep(2 * time.Millisecond)
+
+	// Second reading — delta
+	s.Update("lugs-upstream", "imported-energy", []byte("110.0"))
+	s.Update("lugs-upstream", "exported-energy", []byte("55.0"))
+	deltas := tracker.Process(s)
+
+	if len(deltas) != 1 {
+		t.Fatalf("expected 1 delta, got %d", len(deltas))
+	}
+
+	d := deltas[0]
+	if d.NodeID != "lugs-upstream" {
+		t.Errorf("NodeID = %q", d.NodeID)
+	}
+	if d.NodeType != "upstream" {
+		t.Errorf("NodeType = %q, want upstream", d.NodeType)
+	}
+	if d.Name != "upstream" {
+		t.Errorf("Name = %q, want upstream", d.Name)
+	}
+	if math.Abs(d.ImportedWh-10.0) > 0.001 {
+		t.Errorf("ImportedWh = %f, want 10.0", d.ImportedWh)
+	}
+	if math.Abs(d.ExportedWh-5.0) > 0.001 {
+		t.Errorf("ExportedWh = %f, want 5.0", d.ExportedWh)
+	}
+	if d.PeriodMs <= 0 {
+		t.Errorf("PeriodMs = %f, should be > 0", d.PeriodMs)
+	}
+
+	// Verify average power calculation: impDelta * msPerHour / periodMs
+	expectedAvgImport := 10.0 * msPerHour / d.PeriodMs
+	if math.Abs(d.AvgImportW-expectedAvgImport) > 0.001 {
+		t.Errorf("AvgImportW = %f, want %f", d.AvgImportW, expectedAvgImport)
+	}
+	expectedAvgExport := 5.0 * msPerHour / d.PeriodMs
+	if math.Abs(d.AvgExportW-expectedAvgExport) > 0.001 {
+		t.Errorf("AvgExportW = %f, want %f", d.AvgExportW, expectedAvgExport)
+	}
+}
+
+func TestEnergyTrackerCounterReset(t *testing.T) {
+	s := NewState("dev-1", testLogger())
+	tracker := NewEnergyTracker(testLogger())
+
+	s.Update("lugs-upstream", "imported-energy", []byte("100.0"))
+	s.Update("lugs-upstream", "exported-energy", []byte("50.0"))
+	tracker.Process(s)
+
+	time.Sleep(2 * time.Millisecond)
+
+	// Counter reset — lower values
+	s.Update("lugs-upstream", "imported-energy", []byte("10.0"))
+	s.Update("lugs-upstream", "exported-energy", []byte("5.0"))
+	deltas := tracker.Process(s)
+
+	if len(deltas) != 0 {
+		t.Errorf("counter reset should produce no deltas, got %d", len(deltas))
+	}
+}
+
+func TestEnergyTrackerCircuitNode(t *testing.T) {
+	s := NewState("dev-1", testLogger())
+	tracker := NewEnergyTracker(testLogger())
+
+	// Circuit node — not in knownNodes or energyNodeInfo
+	s.Update("abc123", "imported-energy", []byte("200.0"))
+	s.Update("abc123", "exported-energy", []byte("0.0"))
+	s.Update("abc123", "name", []byte("Kitchen"))
+	tracker.Process(s)
+
+	time.Sleep(2 * time.Millisecond)
+
+	s.Update("abc123", "imported-energy", []byte("210.0"))
+	s.Update("abc123", "exported-energy", []byte("0.0"))
+	deltas := tracker.Process(s)
+
+	if len(deltas) != 1 {
+		t.Fatalf("expected 1 delta, got %d", len(deltas))
+	}
+	if deltas[0].NodeType != "circuit" {
+		t.Errorf("NodeType = %q, want circuit", deltas[0].NodeType)
+	}
+	if deltas[0].Name != "Kitchen" {
+		t.Errorf("Name = %q, want Kitchen", deltas[0].Name)
+	}
+}
+
+func TestEnergyTrackerCircuitNoName(t *testing.T) {
+	s := NewState("dev-1", testLogger())
+	tracker := NewEnergyTracker(testLogger())
+
+	// Circuit without a name property — should use node ID
+	s.Update("hex-circuit", "imported-energy", []byte("100.0"))
+	s.Update("hex-circuit", "exported-energy", []byte("0.0"))
+	tracker.Process(s)
+
+	time.Sleep(2 * time.Millisecond)
+
+	s.Update("hex-circuit", "imported-energy", []byte("105.0"))
+	s.Update("hex-circuit", "exported-energy", []byte("0.0"))
+	deltas := tracker.Process(s)
+
+	if len(deltas) != 1 {
+		t.Fatalf("expected 1 delta, got %d", len(deltas))
+	}
+	if deltas[0].Name != "hex-circuit" {
+		t.Errorf("Name = %q, want hex-circuit (node ID fallback)", deltas[0].Name)
+	}
+}
+
+func TestEnergyTrackerSkipsSystemNodes(t *testing.T) {
+	s := NewState("dev-1", testLogger())
+	tracker := NewEnergyTracker(testLogger())
+
+	// "core" is in knownNodes but NOT in energyNodeInfo → should be skipped
+	s.Update("core", "imported-energy", []byte("999.0"))
+	s.Update("core", "exported-energy", []byte("0.0"))
+	tracker.Process(s)
+
+	time.Sleep(2 * time.Millisecond)
+
+	s.Update("core", "imported-energy", []byte("1000.0"))
+	s.Update("core", "exported-energy", []byte("0.0"))
+	deltas := tracker.Process(s)
+
+	if len(deltas) != 0 {
+		t.Errorf("system nodes without energyNodeInfo should be skipped, got %d deltas", len(deltas))
+	}
+}
+
+func TestEnergyTrackerNoEnergyProps(t *testing.T) {
+	s := NewState("dev-1", testLogger())
+	tracker := NewEnergyTracker(testLogger())
+
+	s.Update("some-node", "voltage", []byte("120.0"))
+	s.Update("some-node", "current", []byte("5.0"))
+
+	deltas := tracker.Process(s)
+	if len(deltas) != 0 {
+		t.Errorf("nodes without energy props should produce no deltas, got %d", len(deltas))
+	}
+}
+
+func TestEnergyTrackerMultipleNodes(t *testing.T) {
+	s := NewState("dev-1", testLogger())
+	tracker := NewEnergyTracker(testLogger())
+
+	// Baseline
+	s.Update("lugs-upstream", "imported-energy", []byte("100.0"))
+	s.Update("lugs-upstream", "exported-energy", []byte("50.0"))
+	s.Update("lugs-downstream", "imported-energy", []byte("200.0"))
+	s.Update("lugs-downstream", "exported-energy", []byte("100.0"))
+	s.Update("circuit-a", "imported-energy", []byte("300.0"))
+	s.Update("circuit-a", "exported-energy", []byte("0.0"))
+	tracker.Process(s)
+
+	time.Sleep(2 * time.Millisecond)
+
+	// Second reading
+	s.Update("lugs-upstream", "imported-energy", []byte("110.0"))
+	s.Update("lugs-upstream", "exported-energy", []byte("55.0"))
+	s.Update("lugs-downstream", "imported-energy", []byte("220.0"))
+	s.Update("lugs-downstream", "exported-energy", []byte("110.0"))
+	s.Update("circuit-a", "imported-energy", []byte("315.0"))
+	s.Update("circuit-a", "exported-energy", []byte("0.0"))
+	deltas := tracker.Process(s)
+
+	if len(deltas) != 3 {
+		t.Fatalf("expected 3 deltas, got %d", len(deltas))
+	}
+
+	byNode := map[string]EnergyDelta{}
+	for _, d := range deltas {
+		byNode[d.NodeID] = d
+	}
+
+	if d, ok := byNode["lugs-upstream"]; !ok {
+		t.Error("missing lugs-upstream delta")
+	} else if math.Abs(d.ImportedWh-10.0) > 0.001 {
+		t.Errorf("upstream imported = %f, want 10.0", d.ImportedWh)
+	}
+
+	if d, ok := byNode["lugs-downstream"]; !ok {
+		t.Error("missing lugs-downstream delta")
+	} else if math.Abs(d.ImportedWh-20.0) > 0.001 {
+		t.Errorf("downstream imported = %f, want 20.0", d.ImportedWh)
+	}
+
+	if d, ok := byNode["circuit-a"]; !ok {
+		t.Error("missing circuit-a delta")
+	} else if math.Abs(d.ImportedWh-15.0) > 0.001 {
+		t.Errorf("circuit-a imported = %f, want 15.0", d.ImportedWh)
+	}
+}
+
+func TestEnergyTrackerRandomized(t *testing.T) {
+	s := NewState("dev-1", testLogger())
+	tracker := NewEnergyTracker(testLogger())
+	r := rand.New(rand.NewSource(99))
+
+	const numCircuits = 10
+	circuitIDs := make([]string, numCircuits)
+	for i := range circuitIDs {
+		circuitIDs[i] = fmt.Sprintf("circuit-%d", i)
+	}
+
+	// Initialize all circuits with random baselines
+	baselines := make(map[string]float64, numCircuits)
+	for _, cid := range circuitIDs {
+		baseline := r.Float64() * 10000
+		baselines[cid] = baseline
+		s.Update(cid, "imported-energy", []byte(fmt.Sprintf("%.2f", baseline)))
+		s.Update(cid, "exported-energy", []byte("0"))
+	}
+	tracker.Process(s)
+
+	time.Sleep(2 * time.Millisecond)
+
+	// Add random increments
+	increments := make(map[string]float64, numCircuits)
+	for _, cid := range circuitIDs {
+		inc := r.Float64() * 100 // 0-100 Wh
+		increments[cid] = inc
+		newVal := baselines[cid] + inc
+		s.Update(cid, "imported-energy", []byte(fmt.Sprintf("%.2f", newVal)))
+		s.Update(cid, "exported-energy", []byte("0"))
+	}
+	deltas := tracker.Process(s)
+
+	if len(deltas) != numCircuits {
+		t.Fatalf("expected %d deltas, got %d", numCircuits, len(deltas))
+	}
+
+	byNode := map[string]EnergyDelta{}
+	for _, d := range deltas {
+		byNode[d.NodeID] = d
+	}
+
+	for _, cid := range circuitIDs {
+		d, ok := byNode[cid]
+		if !ok {
+			t.Errorf("missing delta for %s", cid)
+			continue
+		}
+		if d.NodeType != "circuit" {
+			t.Errorf("%s: NodeType = %q, want circuit", cid, d.NodeType)
+		}
+		// Allow small float rounding
+		if math.Abs(d.ImportedWh-increments[cid]) > 0.02 {
+			t.Errorf("%s: ImportedWh = %f, want ~%f", cid, d.ImportedWh, increments[cid])
+		}
+		if d.AvgImportW <= 0 {
+			t.Errorf("%s: AvgImportW should be > 0, got %f", cid, d.AvgImportW)
+		}
+	}
+}
