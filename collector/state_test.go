@@ -138,7 +138,7 @@ func TestSetDescription(t *testing.T) {
 		},
 	}
 	data, _ := json.Marshal(desc)
-	if err := s.SetDescription(data); err != nil {
+	if _, err := s.SetDescription(data); err != nil {
 		t.Fatalf("SetDescription: %v", err)
 	}
 
@@ -158,7 +158,7 @@ func TestSetDescription(t *testing.T) {
 
 func TestSetDescriptionInvalidJSON(t *testing.T) {
 	s := NewState("dev-1", testLogger())
-	err := s.SetDescription([]byte("{invalid"))
+	_, err := s.SetDescription([]byte("{invalid"))
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
 	}
@@ -274,7 +274,7 @@ func TestParseValueWithSchema(t *testing.T) {
 		},
 	}
 	data, _ := json.Marshal(desc)
-	s.SetDescription(data)
+	s.SetDescription(data) //nolint: errcheck
 
 	s.Update("core", "voltage", []byte("120.5"))
 	s.Update("core", "relay-state", []byte("CLOSED"))
@@ -324,5 +324,220 @@ func TestStateRandomizedUpdates(t *testing.T) {
 		if vals == nil {
 			t.Errorf("node %q missing", nid)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Readiness tests
+// ---------------------------------------------------------------------------
+
+func TestReadinessNotReadyWithoutDescription(t *testing.T) {
+	s := NewState("dev-1", testLogger())
+	r := s.Update("core", "voltage", []byte("120"))
+	if r.Ready {
+		t.Error("should not be ready without description")
+	}
+	if s.IsReady() {
+		t.Error("IsReady should be false without description")
+	}
+}
+
+func TestReadinessLastPropertyTriggersReady(t *testing.T) {
+	s := NewState("dev-1", testLogger())
+
+	desc := DeviceDescription{
+		Nodes: map[string]NodeSchema{
+			"core": {
+				Properties: map[string]PropertySchema{
+					"voltage": {Datatype: "float"},
+					"power":   {Datatype: "float"},
+				},
+			},
+		},
+	}
+	data, _ := json.Marshal(desc)
+	s.SetDescription(data) //nolint: errcheck
+
+	// First property — not ready yet
+	r1 := s.Update("core", "voltage", []byte("120"))
+	if r1.Ready {
+		t.Error("should not be ready after 1 of 2 properties")
+	}
+	if r1.BecameReady {
+		t.Error("should not BecameReady after 1 of 2 properties")
+	}
+
+	// Second property — now ready
+	r2 := s.Update("core", "power", []byte("1500"))
+	if !r2.Ready {
+		t.Error("should be ready after all properties received")
+	}
+	if !r2.BecameReady {
+		t.Error("should BecameReady on the completing update")
+	}
+
+	// Third update — still ready, but not BecameReady again
+	r3 := s.Update("core", "voltage", []byte("121"))
+	if !r3.Ready {
+		t.Error("should still be ready")
+	}
+	if r3.BecameReady {
+		t.Error("BecameReady should only fire once")
+	}
+}
+
+func TestReadinessDescriptionAfterAllProperties(t *testing.T) {
+	s := NewState("dev-1", testLogger())
+
+	// Send all properties BEFORE description
+	s.Update("core", "voltage", []byte("120"))
+	s.Update("core", "power", []byte("1500"))
+
+	if s.IsReady() {
+		t.Error("should not be ready before description")
+	}
+
+	desc := DeviceDescription{
+		Nodes: map[string]NodeSchema{
+			"core": {
+				Properties: map[string]PropertySchema{
+					"voltage": {Datatype: "float"},
+					"power":   {Datatype: "float"},
+				},
+			},
+		},
+	}
+	data, _ := json.Marshal(desc)
+	readyNodes, err := s.SetDescription(data)
+	if err != nil {
+		t.Fatalf("SetDescription: %v", err)
+	}
+	if len(readyNodes) == 0 {
+		t.Error("SetDescription should return ready nodes when all props already received")
+	}
+	found := false
+	for _, n := range readyNodes {
+		if n == "core" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("core should be in ready nodes list")
+	}
+	if !s.IsReady() {
+		t.Error("should be ready after SetDescription when all props present")
+	}
+}
+
+func TestReadinessMultipleNodes(t *testing.T) {
+	s := NewState("dev-1", testLogger())
+
+	desc := DeviceDescription{
+		Nodes: map[string]NodeSchema{
+			"core":    {Properties: map[string]PropertySchema{"voltage": {Datatype: "float"}}},
+			"circuit": {Properties: map[string]PropertySchema{"power": {Datatype: "float"}}},
+		},
+	}
+	data, _ := json.Marshal(desc)
+	s.SetDescription(data) //nolint: errcheck
+
+	// core has 1 property — becomes ready immediately when voltage arrives
+	r1 := s.Update("core", "voltage", []byte("120"))
+	if !r1.Ready || !r1.BecameReady {
+		t.Error("core should be ready after its only property received")
+	}
+	if s.IsReady() {
+		t.Error("global IsReady should be false — circuit still missing")
+	}
+
+	// circuit becomes ready when its property arrives
+	r2 := s.Update("circuit", "power", []byte("50"))
+	if !r2.Ready || !r2.BecameReady {
+		t.Error("circuit should be ready after its property received")
+	}
+	if !s.IsReady() {
+		t.Error("global IsReady should be true — all described nodes ready")
+	}
+}
+
+func TestReadinessExtraPropertiesDontBlock(t *testing.T) {
+	s := NewState("dev-1", testLogger())
+
+	desc := DeviceDescription{
+		Nodes: map[string]NodeSchema{
+			"core": {Properties: map[string]PropertySchema{"voltage": {Datatype: "float"}}},
+		},
+	}
+	data, _ := json.Marshal(desc)
+	s.SetDescription(data) //nolint: errcheck
+
+	// Extra property not in description — should not affect readiness
+	s.Update("unknown-node", "something", []byte("42"))
+	if s.IsReady() {
+		t.Error("extra properties should not make state ready")
+	}
+
+	r := s.Update("core", "voltage", []byte("120"))
+	if !r.Ready {
+		t.Error("should be ready once described property arrives")
+	}
+}
+
+func TestReadinessEmptyDescription(t *testing.T) {
+	s := NewState("dev-1", testLogger())
+
+	desc := DeviceDescription{
+		Nodes: map[string]NodeSchema{
+			"core": {Properties: map[string]PropertySchema{}}, // no properties
+		},
+	}
+	data, _ := json.Marshal(desc)
+	readyNodes, _ := s.SetDescription(data)
+	if len(readyNodes) == 0 {
+		t.Error("description with zero expected properties should be immediately ready")
+	}
+}
+
+func TestReadinessUpdateResultTimestamp(t *testing.T) {
+	s := NewState("dev-1", testLogger())
+
+	before := time.Now()
+	r := s.Update("core", "voltage", []byte("120"))
+	after := time.Now()
+
+	if r.NodeID != "core" {
+		t.Errorf("NodeID = %q, want core", r.NodeID)
+	}
+	if r.Timestamp.Before(before) || r.Timestamp.After(after) {
+		t.Errorf("Timestamp out of range")
+	}
+}
+
+func TestReadinessDuplicatePropertyNotDoubleCounted(t *testing.T) {
+	s := NewState("dev-1", testLogger())
+
+	desc := DeviceDescription{
+		Nodes: map[string]NodeSchema{
+			"core": {Properties: map[string]PropertySchema{
+				"voltage": {Datatype: "float"},
+				"power":   {Datatype: "float"},
+			}},
+		},
+	}
+	data, _ := json.Marshal(desc)
+	s.SetDescription(data) //nolint: errcheck
+
+	// Send voltage multiple times — should count as 1
+	s.Update("core", "voltage", []byte("120"))
+	s.Update("core", "voltage", []byte("121"))
+	s.Update("core", "voltage", []byte("122"))
+
+	if s.IsReady() {
+		t.Error("duplicate properties should not make state ready — power still missing")
+	}
+
+	r := s.Update("core", "power", []byte("1500"))
+	if !r.Ready {
+		t.Error("should be ready now")
 	}
 }

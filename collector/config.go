@@ -105,7 +105,7 @@ questdb:
   http_port: 9000
   # Auto-create tables on startup (PARTITION BY DAY, WAL, DEDUP)
   create_tables: true
-  # How often to snapshot state and write to QuestDB
+  # How often to flush buffered updates to QuestDB
   # Go duration format: "1s", "5s", "30s", "1m", etc.
   write_interval: "5s"
 

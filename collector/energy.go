@@ -16,14 +16,15 @@ type EnergyReading struct {
 }
 
 type EnergyDelta struct {
-	NodeID        string
-	NodeType      string // "circuit", "upstream", "downstream"
-	Name          string
-	ImportedWh    float64
-	ExportedWh    float64
-	PeriodMs   float64 // milliseconds between readings
-	AvgImportW float64 // average import power (W) over the period
-	AvgExportW float64 // average export power (W) over the period
+	NodeID     string
+	NodeType   string // "circuit", "upstream", "downstream"
+	Name       string
+	ImportedWh float64
+	ExportedWh float64
+	PeriodMs   float64   // milliseconds between readings
+	AvgImportW float64   // average import power (W) over the period
+	AvgExportW float64   // average export power (W) over the period
+	Timestamp  time.Time // MQTT arrival time of the reading that produced this delta
 }
 
 const msPerHour = 60 * 60 * 1000
@@ -130,6 +131,7 @@ func (t *EnergyTracker) Process(state *State) []EnergyDelta {
 			PeriodMs:   periodMs,
 			AvgImportW: impDelta * msPerHour / periodMs,
 			AvgExportW: expDelta * msPerHour / periodMs,
+			Timestamp:  nodeTS,
 		})
 	}
 

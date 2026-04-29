@@ -164,20 +164,12 @@ func escILPStr(s string) string {
 // QuestDBWriter
 // ---------------------------------------------------------------------------
 
-// pendingSnapshot holds non-system node data captured before $description arrived.
-type pendingSnapshot struct {
-	ts     time.Time
-	nodes  map[string]map[string]interface{} // nodeID → props
-	deltas []EnergyDelta
-}
-
 type QuestDBWriter struct {
 	conn     net.Conn
 	buf      *bufio.Writer
 	cfg      QuestDBConfig
 	deviceID string
 	logger   *slog.Logger
-	pending  []pendingSnapshot // cached until $description
 }
 
 var qdbHTTP = &http.Client{Timeout: 30 * time.Second}
@@ -226,119 +218,44 @@ func (q *QuestDBWriter) execHTTP(query string) error {
 	return nil
 }
 
-// WriteSnapshot writes the full current state to QuestDB via ILP.
-// System nodes (in nodeTableMap) are always written immediately.
-// Non-system nodes are cached until $description arrives so they can be
-// routed correctly to circuits vs unknown_topics.
-func (q *QuestDBWriter) WriteSnapshot(state *State, deltas []EnergyDelta) error {
-	ts := time.Now().UTC()
-	hasDesc := state.HasDescription()
-
-	// Once $description arrives, flush everything we cached
-	if hasDesc && len(q.pending) > 0 {
-		q.flushPending(state)
-	}
-
-	nodes := state.Nodes()
-	var written, unknownCount int
-	var cachedNodes map[string]map[string]interface{}
-	var cachedDeltas []EnergyDelta
-
-	for _, nodeID := range nodes {
-		props := state.NodeValues(nodeID)
-		if props == nil {
-			continue
+// WriteNodeUpdate writes a single node's data to the ILP buffer,
+// routing it to the correct table based on nodeID and isDescribed.
+func (q *QuestDBWriter) WriteNodeUpdate(nodeID string, props map[string]interface{}, ts time.Time, isDescribed bool) {
+	if table, ok := nodeTableMap[nodeID]; ok {
+		extras := map[string]string{}
+		switch nodeID {
+		case "lugs-upstream":
+			extras["direction"] = "upstream"
+		case "lugs-downstream":
+			extras["direction"] = "downstream"
 		}
-
-		if table, ok := nodeTableMap[nodeID]; ok {
-			// System node → always write immediately
-			extras := map[string]string{}
-			switch nodeID {
-			case "lugs-upstream":
-				extras["direction"] = "upstream"
-			case "lugs-downstream":
-				extras["direction"] = "downstream"
-			}
-			q.writeRow(table, extras, props, ts)
-			written++
-		} else if !hasDesc {
-			// No $description yet → cache for correct routing later
-			if cachedNodes == nil {
-				cachedNodes = make(map[string]map[string]interface{})
-			}
-			cachedNodes[nodeID] = props
-		} else if state.IsDescribedNode(nodeID) {
-			// In $description but not a system node → circuit
-			extras := map[string]string{"circuit_id": nodeID}
-			q.writeRow("circuits", extras, props, ts)
-			written++
-		} else {
-			// Not in $description → unknown
-			q.writeUnknownNode(nodeID, props, ts)
-			unknownCount++
-		}
+		q.writeRow(table, extras, props, ts)
+	} else if isDescribed {
+		extras := map[string]string{"circuit_id": nodeID}
+		q.writeRow("circuits", extras, props, ts)
+	} else {
+		q.writeUnknownNode(nodeID, props, ts)
 	}
+}
 
-	// Route energy deltas
+// WriteEnergyDeltas writes all energy deltas to the ILP buffer,
+// using each delta's own MQTT arrival timestamp.
+func (q *QuestDBWriter) WriteEnergyDeltas(deltas []EnergyDelta) {
 	for i := range deltas {
-		d := &deltas[i]
-		if !hasDesc && d.NodeType == "circuit" {
-			// Circuit deltas need $description to route — cache them
-			cachedDeltas = append(cachedDeltas, *d)
-		} else {
-			// Lug deltas (upstream/downstream) are always safe to write
-			q.writeEnergyDelta(d, ts)
-		}
+		q.writeEnergyDelta(&deltas[i], deltas[i].Timestamp)
 	}
+}
 
-	// Append to pending cache if still waiting
-	if cachedNodes != nil || cachedDeltas != nil {
-		q.pending = append(q.pending, pendingSnapshot{
-			ts:     ts,
-			nodes:  cachedNodes,
-			deltas: cachedDeltas,
-		})
-		if len(q.pending)%10 == 0 {
-			q.logger.Warn("still waiting for $description, caching snapshots",
-				"cached", len(q.pending),
-			)
-		}
-	}
-
+// Flush writes the ILP buffer to QuestDB, reconnecting on failure.
+func (q *QuestDBWriter) Flush() error {
 	if err := q.buf.Flush(); err != nil {
 		q.logger.Warn("ILP flush failed, reconnecting", "error", err)
 		if rErr := q.reconnect(); rErr != nil {
 			return fmt.Errorf("ILP flush: %w (reconnect: %v)", err, rErr)
 		}
-		return fmt.Errorf("ILP flush: %w (reconnected, this cycle lost)", err)
+		return fmt.Errorf("ILP flush: %w (reconnected, batch lost)", err)
 	}
-
-	q.logger.Debug("QuestDB snapshot written",
-		"rows", written,
-		"unknown", unknownCount,
-		"deltas", len(deltas),
-		"pending", len(q.pending),
-	)
 	return nil
-}
-
-// flushPending drains the pre-$description cache, routing each node correctly.
-func (q *QuestDBWriter) flushPending(state *State) {
-	q.logger.Info("$description available, flushing cached snapshots", "count", len(q.pending))
-	for _, snap := range q.pending {
-		for nodeID, props := range snap.nodes {
-			if state.IsDescribedNode(nodeID) {
-				extras := map[string]string{"circuit_id": nodeID}
-				q.writeRow("circuits", extras, props, snap.ts)
-			} else {
-				q.writeUnknownNode(nodeID, props, snap.ts)
-			}
-		}
-		for i := range snap.deltas {
-			q.writeEnergyDelta(&snap.deltas[i], snap.ts)
-		}
-	}
-	q.pending = nil
 }
 
 // buildRowLine builds an ILP line for a system/circuit node row.

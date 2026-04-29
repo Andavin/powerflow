@@ -15,7 +15,14 @@ import (
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
-const version = "4.0.0"
+const version = "5.0.0"
+
+// pendingWrite is a node snapshot queued for the next ILP flush.
+type pendingWrite struct {
+	nodeID string
+	props  map[string]interface{}
+	ts     time.Time
+}
 
 func main() {
 	cfgPath := flag.String("config", "/config/config.yml", "path to YAML config file")
@@ -53,7 +60,7 @@ func main() {
 		"client_id", cfg.MQTT.ClientID,
 		"device_id", cfg.Span.DeviceID,
 		"subscribe", cfg.Span.SubscribeTopic(),
-		"write_interval", cfg.QuestDB.WriteInterval,
+		"flush_interval", cfg.QuestDB.WriteInterval,
 		"questdb", fmt.Sprintf("%s:%d", cfg.QuestDB.Host, cfg.QuestDB.ILPPort),
 		"tls", cfg.MQTT.CACert != "",
 		"log_level", cfg.Logging.Level,
@@ -81,13 +88,6 @@ func main() {
 	}
 	defer client.Disconnect(1000)
 
-	// ---- Subscriber ---------------------------------------------------
-	collector := NewCollector(client, state, cfg.Span, logger)
-	if err := collector.Subscribe(); err != nil {
-		logger.Error("subscription failed", "error", err)
-		os.Exit(1)
-	}
-
 	// ---- QuestDB ------------------------------------------------------
 	qdbWriter, err := NewQuestDBWriter(cfg.QuestDB, cfg.Span.DeviceID, logger)
 	if err != nil {
@@ -104,66 +104,98 @@ func main() {
 
 	energyTracker := NewEnergyTracker(logger)
 
-	// Writer goroutine — keeps QuestDB writes off the main loop so
-	// MQTT message reception is never blocked by ILP flushes.
-	// Buffer absorbs bursts; blocking send ensures no tick is ever dropped.
-	snapCh := make(chan struct{}, 16)
+	// ---- Update channel -----------------------------------------------
+	// MQTT property updates queue per-node writes here.
+	// Blocking send ensures no update is ever dropped.
+	updateCh := make(chan pendingWrite, 1024)
+
+	// ---- Writer goroutine ---------------------------------------------
+	// Accumulates node updates and flushes to QuestDB on a timer.
 	var writerWg sync.WaitGroup
 	writerWg.Add(1)
 	go func() {
 		defer writerWg.Done()
-		for range snapCh {
-			deltas := energyTracker.Process(state)
-			if err := qdbWriter.WriteSnapshot(state, deltas); err != nil {
-				logger.Error("QuestDB write failed", "error", err)
+		ticker := time.NewTicker(cfg.QuestDB.parsed)
+		defer ticker.Stop()
+
+		var batch []pendingWrite
+		var flushCount uint64
+
+		for {
+			select {
+			case pw, ok := <-updateCh:
+				if !ok {
+					// Channel closed — flush remaining and exit
+					flushBatch(batch, qdbWriter, energyTracker, state, logger, &flushCount)
+					return
+				}
+				batch = append(batch, pw)
+
+			case <-ticker.C:
+				flushBatch(batch, qdbWriter, energyTracker, state, logger, &flushCount)
+				batch = batch[:0]
 			}
 		}
 	}()
+
+	// ---- Subscriber ---------------------------------------------------
+	// The onUpdate callback fires for every MQTT property update once the
+	// state is ready (all described properties received at least once).
+	// On BecameReady, it queues the initial snapshot for ALL nodes.
+	onUpdate := func(result UpdateResult) {
+		if result.BecameReady {
+			logger.Info("node ready — all described properties received", "node", result.NodeID)
+		}
+		updateCh <- pendingWrite{
+			nodeID: result.NodeID,
+			props:  state.NodeValues(result.NodeID),
+			ts:     result.Timestamp,
+		}
+	}
+
+	collector := NewCollector(client, state, cfg.Span, logger, onUpdate)
+	if err := collector.Subscribe(); err != nil {
+		logger.Error("subscription failed", "error", err)
+		os.Exit(1)
+	}
 
 	// ---- Signal handling ----------------------------------------------
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	// ---- Snapshot loop ------------------------------------------------
-	ticker := time.NewTicker(cfg.QuestDB.parsed)
-	defer ticker.Stop()
+	logger.Info("waiting for $description and initial data — send SIGINT/SIGTERM to stop")
 
-	var snapCount uint64
+	sig := <-sigCh
+	logger.Info("shutting down", "signal", sig)
+	close(updateCh)
+	writerWg.Wait()
+	qdbWriter.Close()
+	client.Disconnect(1000)
+	logger.Info("shutdown complete")
+}
 
-	logger.Info("snapshot loop started — send SIGINT/SIGTERM to stop")
-
-	for {
-		select {
-		case <-ticker.C:
-			msgCount, nodeCount, circuitCount, lastUpdate := state.Stats()
-			if msgCount == 0 {
-				logger.Warn("no SPAN data received yet, skipping snapshot")
-				continue
-			}
-
-			snapCh <- struct{}{}
-			snapCount++
-			logger.Info("snapshot queued",
-				"cycle", snapCount,
-				"nodes", nodeCount,
-				"circuits", circuitCount,
-				"msgs_received", msgCount,
-				"last_span_update", lastUpdate.Format(time.RFC3339),
-			)
-
-		case sig := <-sigCh:
-			logger.Info("shutting down",
-				"signal", sig,
-				"total_snapshots", snapCount,
-			)
-			close(snapCh)
-			writerWg.Wait()
-			qdbWriter.Close()
-			client.Disconnect(1000)
-			logger.Info("shutdown complete")
-			return
-		}
+func flushBatch(batch []pendingWrite, qdb *QuestDBWriter, energy *EnergyTracker, state *State, logger *slog.Logger, count *uint64) {
+	if len(batch) == 0 {
+		return
 	}
+
+	for _, pw := range batch {
+		qdb.WriteNodeUpdate(pw.nodeID, pw.props, pw.ts, state.IsDescribedNode(pw.nodeID))
+	}
+
+	deltas := energy.Process(state)
+	qdb.WriteEnergyDeltas(deltas)
+
+	if err := qdb.Flush(); err != nil {
+		logger.Error("QuestDB flush failed", "error", err)
+	}
+
+	*count++
+	logger.Info("batch flushed",
+		"cycle", *count,
+		"updates", len(batch),
+		"deltas", len(deltas),
+	)
 }
 
 // ---------------------------------------------------------------------------

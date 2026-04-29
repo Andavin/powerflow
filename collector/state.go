@@ -50,6 +50,17 @@ var knownNodes = map[string]string{
 }
 
 // ---------------------------------------------------------------------------
+// Update result
+// ---------------------------------------------------------------------------
+
+type UpdateResult struct {
+	NodeID      string
+	Timestamp   time.Time
+	Ready       bool // all described properties have been received
+	BecameReady bool // this update caused the transition to ready
+}
+
+// ---------------------------------------------------------------------------
 // State store
 // ---------------------------------------------------------------------------
 
@@ -63,34 +74,60 @@ type State struct {
 	lastUpdate  time.Time
 	msgCount    uint64
 	logger      *slog.Logger
+
+	// Readiness tracking — populated once $description arrives
+	receivedProps map[string]map[string]bool
+	readyNodes    map[string]bool // per-node readiness
 }
 
 func NewState(deviceID string, logger *slog.Logger) *State {
 	return &State{
-		deviceID:    deviceID,
-		values:      make(map[string]map[string]interface{}),
-		nodeUpdated: make(map[string]time.Time),
-		logger:      logger.With("component", "state"),
+		deviceID:      deviceID,
+		values:        make(map[string]map[string]interface{}),
+		nodeUpdated:   make(map[string]time.Time),
+		receivedProps: make(map[string]map[string]bool),
+		readyNodes:    make(map[string]bool),
+		logger:        logger.With("component", "state"),
 	}
 }
 
 // SetDescription parses and stores the Homie $description payload.
-func (s *State) SetDescription(data []byte) error {
+// Returns the list of node IDs that became ready as a result (their
+// described properties were already received before $description arrived).
+func (s *State) SetDescription(data []byte) (readyNodeIDs []string, err error) {
 	var desc DeviceDescription
 	if err := json.Unmarshal(data, &desc); err != nil {
-		return fmt.Errorf("parse $description: %w", err)
+		return nil, fmt.Errorf("parse $description: %w", err)
 	}
 
 	s.mu.Lock()
 	s.description = &desc
+
+	// Check each described node — if all its properties already received, mark ready
+	for nodeID := range desc.Nodes {
+		if !s.readyNodes[nodeID] && s.checkNodeReadyLocked(nodeID) {
+			s.readyNodes[nodeID] = true
+			readyNodeIDs = append(readyNodeIDs, nodeID)
+		}
+	}
+
+	// Already-received nodes NOT in description are unknown → immediately ready
+	for nodeID := range s.values {
+		if _, described := desc.Nodes[nodeID]; !described && !s.readyNodes[nodeID] {
+			s.readyNodes[nodeID] = true
+			readyNodeIDs = append(readyNodeIDs, nodeID)
+		}
+	}
 	s.mu.Unlock()
 
-	// Count circuits vs known nodes
+	// Count circuits vs known nodes for logging
 	circuitCount := 0
-	for nodeID := range desc.Nodes {
+	totalProps := 0
+	for nodeID, schema := range desc.Nodes {
 		if _, known := knownNodes[nodeID]; !known {
 			circuitCount++
 		}
+		totalProps += len(schema.Properties)
 	}
 
 	s.logger.Info("loaded device description",
@@ -98,12 +135,14 @@ func (s *State) SetDescription(data []byte) error {
 		"homie", desc.Homie,
 		"total_nodes", len(desc.Nodes),
 		"circuits", circuitCount,
+		"total_properties", totalProps,
+		"nodes_immediately_ready", len(readyNodeIDs),
 	)
-	return nil
+	return readyNodeIDs, nil
 }
 
 // Update stores a single property value, parsing it according to the schema.
-func (s *State) Update(node, property string, payload []byte) {
+func (s *State) Update(node, property string, payload []byte) UpdateResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -116,6 +155,27 @@ func (s *State) Update(node, property string, payload []byte) {
 	s.nodeUpdated[node] = now
 	s.lastUpdate = now
 	s.msgCount++
+
+	// Track received properties for readiness
+	if s.receivedProps[node] == nil {
+		s.receivedProps[node] = make(map[string]bool)
+	}
+	s.receivedProps[node][property] = true
+
+	result := UpdateResult{
+		NodeID:    node,
+		Timestamp: now,
+	}
+
+	if s.readyNodes[node] {
+		result.Ready = true
+	} else if s.checkNodeReadyLocked(node) {
+		s.readyNodes[node] = true
+		result.Ready = true
+		result.BecameReady = true
+	}
+
+	return result
 }
 
 // Stats returns counters for logging.
@@ -149,6 +209,50 @@ func (s *State) HasDescription() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.description != nil
+}
+
+// IsReady reports whether all described nodes have received all their properties.
+func (s *State) IsReady() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.description == nil {
+		return false
+	}
+	for nodeID := range s.description.Nodes {
+		if !s.readyNodes[nodeID] {
+			return false
+		}
+	}
+	return true
+}
+
+// IsNodeReady reports whether a specific node has received all its described properties.
+func (s *State) IsNodeReady(nodeID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.readyNodes[nodeID]
+}
+
+// checkNodeReadyLocked checks if a node has received all its described properties.
+// Must be called with s.mu held.
+func (s *State) checkNodeReadyLocked(nodeID string) bool {
+	if s.description == nil {
+		return false
+	}
+	schema, described := s.description.Nodes[nodeID]
+	if !described {
+		return true // unknown node — immediately ready
+	}
+	received := s.receivedProps[nodeID]
+	if received == nil {
+		return len(schema.Properties) == 0
+	}
+	for propID := range schema.Properties {
+		if !received[propID] {
+			return false
+		}
+	}
+	return true
 }
 
 // NodeLastUpdate returns the MQTT arrival time of the most recent message for a node.

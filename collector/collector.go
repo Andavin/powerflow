@@ -3,6 +3,7 @@ package main
 import (
 	"log/slog"
 	"strings"
+	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
@@ -14,15 +15,17 @@ type Collector struct {
 	topicBase string // e.g. "ebus/5/REPLACE-WITH-YOUR-PANEL-SERIAL/"
 	subTopic  string // e.g. "ebus/5/REPLACE-WITH-YOUR-PANEL-SERIAL/#"
 	logger    *slog.Logger
+	onUpdate  func(UpdateResult) // called after each state update when ready
 }
 
-func NewCollector(client mqtt.Client, state *State, cfg SpanConfig, logger *slog.Logger) *Collector {
+func NewCollector(client mqtt.Client, state *State, cfg SpanConfig, logger *slog.Logger, onUpdate func(UpdateResult)) *Collector {
 	return &Collector{
 		client:    client,
 		state:     state,
 		topicBase: cfg.TopicBase(),
 		subTopic:  cfg.SubscribeTopic(),
 		logger:    logger.With("component", "collector"),
+		onUpdate:  onUpdate,
 	}
 }
 
@@ -42,12 +45,12 @@ func (c *Collector) Subscribe() error {
 
 // topicResult describes the parsed outcome of an MQTT topic.
 type topicResult struct {
-	Node        string // non-empty for data topics
-	Property    string // non-empty for data topics
-	Special     string // "$state", "$description", etc. — non-empty for Homie system topics
-	Ignored     bool   // true if the topic should be silently dropped
-	NoPrefix    bool   // true if the topic didn't match the base prefix
-	NoSlash     bool   // true if the rest had no slash (not a node/property pair)
+	Node     string // non-empty for data topics
+	Property string // non-empty for data topics
+	Special  string // "$state", "$description", etc. — non-empty for Homie system topics
+	Ignored  bool   // true if the topic should be silently dropped
+	NoPrefix bool   // true if the topic didn't match the base prefix
+	NoSlash  bool   // true if the rest had no slash (not a node/property pair)
 }
 
 // parseTopic extracts the node and property from a full MQTT topic
@@ -87,32 +90,49 @@ func (c *Collector) onMessage(_ mqtt.Client, msg mqtt.Message) {
 	topic := msg.Topic()
 	payload := msg.Payload()
 
-	result := parseTopic(c.topicBase, topic)
+	tr := parseTopic(c.topicBase, topic)
 
-	if result.NoPrefix || result.Ignored || result.NoSlash {
-		if result.NoSlash {
+	if tr.NoPrefix || tr.Ignored || tr.NoSlash {
+		if tr.NoSlash {
 			c.logger.Debug("skipping non-property topic", "suffix", topic[len(c.topicBase):])
 		}
 		return
 	}
 
-	if result.Special == "$state" {
+	if tr.Special == "$state" {
 		c.logger.Debug("device state update", "state", string(payload))
 		return
 	}
-	if result.Special == "$description" {
+	if tr.Special == "$description" {
 		c.logger.Debug("received $description", "bytes", len(payload))
-		if err := c.state.SetDescription(payload); err != nil {
+		readyNodes, err := c.state.SetDescription(payload)
+		if err != nil {
 			c.logger.Error("failed to parse $description", "error", err)
+			return
+		}
+		if c.onUpdate != nil {
+			now := time.Now()
+			for _, nodeID := range readyNodes {
+				c.onUpdate(UpdateResult{
+					NodeID:      nodeID,
+					Ready:       true,
+					BecameReady: true,
+					Timestamp:   now,
+				})
+			}
 		}
 		return
 	}
 
-	c.state.Update(result.Node, result.Property, payload)
+	ur := c.state.Update(tr.Node, tr.Property, payload)
+
+	if c.onUpdate != nil && ur.Ready {
+		c.onUpdate(ur)
+	}
 
 	c.logger.Debug("state updated",
-		"node", result.Node,
-		"property", result.Property,
+		"node", tr.Node,
+		"property", tr.Property,
 		"value", string(payload),
 	)
 }
