@@ -366,7 +366,12 @@ func (q *QuestDBWriter) reconnect() error {
 }
 
 func (q *QuestDBWriter) Close() error {
-	q.buf.Flush()
+	// Flush before closing so any buffered batch reaches QuestDB. A failure
+	// here means data is lost (the connection is about to drop), so log it
+	// loudly rather than silently swallowing the error.
+	if err := q.buf.Flush(); err != nil {
+		q.logger.Error("final ILP flush failed; buffered batch lost", "error", err)
+	}
 	return q.conn.Close()
 }
 
