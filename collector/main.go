@@ -94,7 +94,8 @@ func main() {
 		logger.Error("MQTT connect failed", "error", err)
 		os.Exit(1)
 	}
-	defer client.Disconnect(1000)
+	// Note: Disconnect is called explicitly after the writer drains during
+	// graceful shutdown; no defer needed here.
 
 	// ---- QuestDB ------------------------------------------------------
 	qdbWriter, err := NewQuestDBWriter(cfg.QuestDB, cfg.Span.DeviceID, logger)
