@@ -79,11 +79,19 @@ func main() {
 	logger.Info("connecting to MQTT broker", "url", cfg.MQTT.BrokerURL())
 	token := client.Connect()
 	if !token.WaitTimeout(15 * time.Second) {
-		logger.Error("MQTT connect timed out")
+		// With SetConnectRetry(false) the token should normally complete
+		// (success or specific failure). A timeout here means the broker
+		// never produced a CONNACK or TLS handshake — i.e. unreachable.
+		if err := token.Error(); err != nil {
+			logger.Error("MQTT connect failed (timed out waiting for completion)", "error", err)
+		} else {
+			logger.Error("MQTT connect timed out — broker unreachable or unresponsive",
+				"url", cfg.MQTT.BrokerURL())
+		}
 		os.Exit(1)
 	}
-	if token.Error() != nil {
-		logger.Error("MQTT connect failed", "error", token.Error())
+	if err := token.Error(); err != nil {
+		logger.Error("MQTT connect failed", "error", err)
 		os.Exit(1)
 	}
 	defer client.Disconnect(1000)
@@ -222,8 +230,12 @@ func createMQTTClient(cfg *Config, logger *slog.Logger) (mqtt.Client, error) {
 
 	opts.SetAutoReconnect(true)
 	opts.SetMaxReconnectInterval(30 * time.Second)
-	opts.SetConnectRetry(true)
-	opts.SetConnectRetryInterval(5 * time.Second)
+	// SetConnectRetry(false) so the FIRST connect surfaces the real failure
+	// (auth rejection, DNS error, TLS hostname mismatch, ...) instead of
+	// silently retrying forever and looking like a generic timeout.
+	// SetAutoReconnect(true) above still handles drops after a successful
+	// initial connect, so reconnect behavior in normal operation is unchanged.
+	opts.SetConnectRetry(false)
 	opts.SetConnectTimeout(10 * time.Second)
 	opts.SetOrderMatters(false)
 
