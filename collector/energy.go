@@ -114,7 +114,10 @@ func (t *EnergyTracker) Process(state *State) []EnergyDelta {
 		expDelta := exported - prev.ExportedEnergy
 
 		if impDelta < 0 || expDelta < 0 {
-			t.logger.Warn("energy counter reset, skipping",
+			// Cache was already overwritten with the new (post-reset) reading
+			// above, so the next call computes a fresh positive delta from
+			// the rebased baseline. No additional bookkeeping needed.
+			t.logger.Warn("energy counter reset detected; baseline rebased, skipping this delta",
 				"node", nodeID,
 				"imported_delta", impDelta,
 				"exported_delta", expDelta,

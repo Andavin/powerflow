@@ -123,6 +123,47 @@ func TestEnergyTrackerCounterReset(t *testing.T) {
 	}
 }
 
+// TestEnergyTrackerCounterResetRebasesBaseline verifies that after a counter
+// reset is detected, the next non-decreasing reading produces a correct delta
+// relative to the post-reset value — not relative to the pre-reset baseline.
+// (Regression guard for the cache-update ordering in Process.)
+func TestEnergyTrackerCounterResetRebasesBaseline(t *testing.T) {
+	s := NewState("dev-1", testLogger(), time.Hour)
+	tracker := NewEnergyTracker(testLogger())
+
+	// Establish a high baseline.
+	s.Update("lugs-upstream", "imported-energy", []byte("1000.0"))
+	s.Update("lugs-upstream", "exported-energy", []byte("500.0"))
+	tracker.Process(s)
+	time.Sleep(2 * time.Millisecond)
+
+	// Counter reset to low values — no delta emitted, but baseline must be
+	// rebased to (10, 5) so the next reading is a small positive delta.
+	s.Update("lugs-upstream", "imported-energy", []byte("10.0"))
+	s.Update("lugs-upstream", "exported-energy", []byte("5.0"))
+	if d := tracker.Process(s); len(d) != 0 {
+		t.Fatalf("reset reading should produce no delta, got %d", len(d))
+	}
+	time.Sleep(2 * time.Millisecond)
+
+	// Next reading: should yield delta against (10, 5), NOT (1000, 500).
+	// If the cache had not been rebased, this reading (15, 7) would still
+	// be negative relative to the pre-reset baseline and be skipped — so
+	// asserting a non-empty delta proves rebase happened.
+	s.Update("lugs-upstream", "imported-energy", []byte("15.0"))
+	s.Update("lugs-upstream", "exported-energy", []byte("7.0"))
+	deltas := tracker.Process(s)
+	if len(deltas) != 1 {
+		t.Fatalf("expected 1 delta after rebase, got %d", len(deltas))
+	}
+	if deltas[0].ImportedWh != 5.0 {
+		t.Errorf("imported delta = %v, want 5.0 (15 - rebased 10)", deltas[0].ImportedWh)
+	}
+	if deltas[0].ExportedWh != 2.0 {
+		t.Errorf("exported delta = %v, want 2.0 (7 - rebased 5)", deltas[0].ExportedWh)
+	}
+}
+
 func TestEnergyTrackerCircuitNode(t *testing.T) {
 	s := NewState("dev-1", testLogger(), time.Hour)
 	tracker := NewEnergyTracker(testLogger())
