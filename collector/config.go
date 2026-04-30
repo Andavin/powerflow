@@ -41,6 +41,16 @@ func (m *MQTTConfig) BrokerURL() string {
 type SpanConfig struct {
 	TopicPrefix string `yaml:"topic_prefix"`
 	DeviceID    string `yaml:"device_id"`
+
+	// ReadinessGrace bounds how long the collector waits for every described
+	// property to arrive before flushing a node's first row. After this
+	// elapses, the node is marked ready with whatever has been received and
+	// missing properties are logged. Empty/zero disables the fallback
+	// (strict-only behavior — nodes whose description lists properties the
+	// panel never publishes will never flush).
+	ReadinessGrace string `yaml:"readiness_grace"`
+
+	parsedReadinessGrace time.Duration
 }
 
 func (s *SpanConfig) SubscribeTopic() string {
@@ -94,6 +104,11 @@ span:
   topic_prefix: "ebus/5"
   # SPAN panel device ID (serial number)
   device_id: "REPLACE-WITH-YOUR-PANEL-SERIAL"
+  # How long to wait for every described property of a node to arrive before
+  # the node is marked "ready" with whatever has been received. Properties
+  # the panel never publishes (e.g., dipole on single-pole circuits) would
+  # otherwise block the node forever. Set to "0" for strict-only behavior.
+  readiness_grace: "3s"
 
 # QuestDB time-series database
 questdb:
@@ -151,7 +166,8 @@ func ParseConfig(data []byte) (*Config, error) {
 			ClientID: "span-collector",
 		},
 		Span: SpanConfig{
-			TopicPrefix: "ebus/5",
+			TopicPrefix:    "ebus/5",
+			ReadinessGrace: "3s",
 		},
 		QuestDB: QuestDBConfig{
 			Host:          "127.0.0.1",
@@ -175,6 +191,19 @@ func ParseConfig(data []byte) (*Config, error) {
 		return nil, fmt.Errorf("invalid questdb.write_interval %q: %w", cfg.QuestDB.WriteInterval, err)
 	}
 	cfg.QuestDB.parsed = dur
+
+	if cfg.Span.ReadinessGrace == "" {
+		cfg.Span.parsedReadinessGrace = 3 * time.Second
+	} else {
+		grace, err := time.ParseDuration(cfg.Span.ReadinessGrace)
+		if err != nil {
+			return nil, fmt.Errorf("invalid span.readiness_grace %q: %w", cfg.Span.ReadinessGrace, err)
+		}
+		if grace < 0 {
+			return nil, fmt.Errorf("span.readiness_grace must be >= 0, got %s", grace)
+		}
+		cfg.Span.parsedReadinessGrace = grace
+	}
 
 	return cfg, cfg.validate()
 }

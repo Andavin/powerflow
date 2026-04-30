@@ -78,16 +78,36 @@ type State struct {
 	// Readiness tracking — populated once $description arrives
 	receivedProps map[string]map[string]bool
 	readyNodes    map[string]bool // per-node readiness
+
+	// Hybrid readiness: a node is also marked ready once readinessGrace has
+	// elapsed since its first message, even if some described properties
+	// never publish. firstSeenAt and propCounts feed that decision and the
+	// "ready with missing properties" diagnostic log.
+	firstSeenAt    map[string]time.Time      // node → time of first observed property
+	propCounts     map[string]map[string]int // node → property → publish count
+	readinessGrace time.Duration             // 0 disables the timer fallback (strict-only mode)
+
+	// nowFn is overridable in tests so the readiness timer can be advanced
+	// without sleeping. Defaults to time.Now in NewState.
+	nowFn func() time.Time
 }
 
-func NewState(deviceID string, logger *slog.Logger) *State {
+// NewState constructs a State for the given device. readinessGrace is the
+// maximum time a described node will wait for all its properties before being
+// marked ready with whatever has arrived; pass 0 to retain the original
+// strict-only behavior (no fallback).
+func NewState(deviceID string, logger *slog.Logger, readinessGrace time.Duration) *State {
 	return &State{
-		deviceID:      deviceID,
-		values:        make(map[string]map[string]interface{}),
-		nodeUpdated:   make(map[string]time.Time),
-		receivedProps: make(map[string]map[string]bool),
-		readyNodes:    make(map[string]bool),
-		logger:        logger.With("component", "state"),
+		deviceID:       deviceID,
+		values:         make(map[string]map[string]interface{}),
+		nodeUpdated:    make(map[string]time.Time),
+		receivedProps:  make(map[string]map[string]bool),
+		readyNodes:     make(map[string]bool),
+		firstSeenAt:    make(map[string]time.Time),
+		propCounts:     make(map[string]map[string]int),
+		readinessGrace: readinessGrace,
+		nowFn:          time.Now,
+		logger:         logger.With("component", "state"),
 	}
 }
 
@@ -150,7 +170,7 @@ func (s *State) Update(node, property string, payload []byte) UpdateResult {
 		s.values[node] = make(map[string]interface{})
 	}
 
-	now := time.Now()
+	now := s.nowFn()
 	s.values[node][property] = s.parseValue(node, property, payload)
 	s.nodeUpdated[node] = now
 	s.lastUpdate = now
@@ -161,6 +181,15 @@ func (s *State) Update(node, property string, payload []byte) UpdateResult {
 		s.receivedProps[node] = make(map[string]bool)
 	}
 	s.receivedProps[node][property] = true
+
+	// Track first-seen time and publish counts for the grace-timer fallback
+	if _, exists := s.firstSeenAt[node]; !exists {
+		s.firstSeenAt[node] = now
+	}
+	if s.propCounts[node] == nil {
+		s.propCounts[node] = make(map[string]int)
+	}
+	s.propCounts[node][property]++
 
 	result := UpdateResult{
 		NodeID:    node,
@@ -233,8 +262,16 @@ func (s *State) IsNodeReady(nodeID string) bool {
 	return s.readyNodes[nodeID]
 }
 
-// checkNodeReadyLocked checks if a node has received all its described properties.
-// Must be called with s.mu held.
+// checkNodeReadyLocked decides whether a described node should be marked ready.
+// Must be called with s.mu held. Two paths to ready:
+//
+//  1. Strict — every described property has been received at least once.
+//  2. Grace timer — readinessGrace has elapsed since the first message for
+//     this node. The remaining properties are presumed to be either
+//     event-only (Homie retained=false) or simply not published by the panel
+//     for this particular node. A warn log lists what's still missing.
+//
+// readinessGrace == 0 disables path 2 (strict-only mode).
 func (s *State) checkNodeReadyLocked(nodeID string) bool {
 	if s.description == nil {
 		return false
@@ -243,14 +280,60 @@ func (s *State) checkNodeReadyLocked(nodeID string) bool {
 	if !described {
 		return true // unknown node — immediately ready
 	}
+
+	// Path 1: strict description match
 	received := s.receivedProps[nodeID]
-	if received == nil {
-		return len(schema.Properties) == 0
+	if received == nil && len(schema.Properties) == 0 {
+		return true
 	}
+	allReceived := received != nil
 	for propID := range schema.Properties {
 		if !received[propID] {
-			return false
+			allReceived = false
+			break
 		}
+	}
+	if allReceived {
+		return true
+	}
+
+	// Path 2: grace-timer fallback
+	if s.readinessGrace <= 0 {
+		return false
+	}
+	first, hasFirst := s.firstSeenAt[nodeID]
+	if !hasFirst || s.nowFn().Sub(first) < s.readinessGrace {
+		return false
+	}
+	return s.markReadyWithMissingLocked(nodeID, schema)
+}
+
+// markReadyWithMissingLocked emits a warn log enumerating which described
+// properties were never received before the grace timer fired. It always
+// returns true so callers can use it inline. Must be called with s.mu held.
+func (s *State) markReadyWithMissingLocked(nodeID string, schema NodeSchema) bool {
+	received := s.receivedProps[nodeID]
+	var missing []string
+	for propID := range schema.Properties {
+		if received == nil || !received[propID] {
+			missing = append(missing, propID)
+		}
+	}
+	if len(missing) > 0 {
+		// Count properties seen multiple times — operational signal that the
+		// retained burst likely completed before grace expired.
+		var multiseen int
+		for _, c := range s.propCounts[nodeID] {
+			if c >= 2 {
+				multiseen++
+			}
+		}
+		s.logger.Warn("node ready with missing described properties",
+			"node", nodeID,
+			"missing", missing,
+			"elapsed", s.nowFn().Sub(s.firstSeenAt[nodeID]).Round(time.Millisecond),
+			"props_seen_multiple_times", multiseen,
+		)
 	}
 	return true
 }

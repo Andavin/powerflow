@@ -67,7 +67,7 @@ func main() {
 	)
 
 	// ---- State --------------------------------------------------------
-	state := NewState(cfg.Span.DeviceID, logger)
+	state := NewState(cfg.Span.DeviceID, logger, cfg.Span.parsedReadinessGrace)
 
 	// ---- MQTT client --------------------------------------------------
 	client, err := createMQTTClient(cfg, logger)

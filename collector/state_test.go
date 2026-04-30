@@ -15,7 +15,7 @@ func testLogger() *slog.Logger {
 }
 
 func TestNewState(t *testing.T) {
-	s := NewState("dev-1", testLogger())
+	s := NewState("dev-1", testLogger(), time.Hour)
 	if s == nil {
 		t.Fatal("NewState returned nil")
 	}
@@ -26,7 +26,7 @@ func TestNewState(t *testing.T) {
 }
 
 func TestStateUpdateAndRead(t *testing.T) {
-	s := NewState("dev-1", testLogger())
+	s := NewState("dev-1", testLogger(), time.Hour)
 
 	s.Update("core", "voltage", []byte("120.5"))
 	s.Update("core", "relay-state", []byte("CLOSED"))
@@ -55,14 +55,14 @@ func TestStateUpdateAndRead(t *testing.T) {
 }
 
 func TestStateNodeValuesReturnsNilForMissing(t *testing.T) {
-	s := NewState("dev-1", testLogger())
+	s := NewState("dev-1", testLogger(), time.Hour)
 	if s.NodeValues("nonexistent") != nil {
 		t.Error("expected nil for missing node")
 	}
 }
 
 func TestStateNodeValuesCopy(t *testing.T) {
-	s := NewState("dev-1", testLogger())
+	s := NewState("dev-1", testLogger(), time.Hour)
 	s.Update("n1", "key", []byte("value"))
 
 	copy1 := s.NodeValues("n1")
@@ -75,7 +75,7 @@ func TestStateNodeValuesCopy(t *testing.T) {
 }
 
 func TestStateStats(t *testing.T) {
-	s := NewState("dev-1", testLogger())
+	s := NewState("dev-1", testLogger(), time.Hour)
 
 	msgCount, nodeCount, circuitCount, lastUpdate := s.Stats()
 	if msgCount != 0 || nodeCount != 0 || circuitCount != 0 {
@@ -105,7 +105,7 @@ func TestStateStats(t *testing.T) {
 }
 
 func TestStateNodeLastUpdate(t *testing.T) {
-	s := NewState("dev-1", testLogger())
+	s := NewState("dev-1", testLogger(), time.Hour)
 
 	if !s.NodeLastUpdate("core").IsZero() {
 		t.Error("expected zero time for unseen node")
@@ -122,7 +122,7 @@ func TestStateNodeLastUpdate(t *testing.T) {
 }
 
 func TestSetDescription(t *testing.T) {
-	s := NewState("dev-1", testLogger())
+	s := NewState("dev-1", testLogger(), time.Hour)
 
 	if s.HasDescription() {
 		t.Error("should not have description initially")
@@ -157,7 +157,7 @@ func TestSetDescription(t *testing.T) {
 }
 
 func TestSetDescriptionInvalidJSON(t *testing.T) {
-	s := NewState("dev-1", testLogger())
+	s := NewState("dev-1", testLogger(), time.Hour)
 	_, err := s.SetDescription([]byte("{invalid"))
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
@@ -165,7 +165,7 @@ func TestSetDescriptionInvalidJSON(t *testing.T) {
 }
 
 func TestIsDescribedNodeNoDescription(t *testing.T) {
-	s := NewState("dev-1", testLogger())
+	s := NewState("dev-1", testLogger(), time.Hour)
 	if s.IsDescribedNode("anything") {
 		t.Error("should return false when no description loaded")
 	}
@@ -259,7 +259,7 @@ func TestCopyMap(t *testing.T) {
 }
 
 func TestParseValueWithSchema(t *testing.T) {
-	s := NewState("dev-1", testLogger())
+	s := NewState("dev-1", testLogger(), time.Hour)
 
 	desc := DeviceDescription{
 		Nodes: map[string]NodeSchema{
@@ -297,7 +297,7 @@ func TestParseValueWithSchema(t *testing.T) {
 }
 
 func TestStateRandomizedUpdates(t *testing.T) {
-	s := NewState("dev-1", testLogger())
+	s := NewState("dev-1", testLogger(), time.Hour)
 	r := rand.New(rand.NewSource(42))
 
 	nodeIDs := []string{"core", "lugs-upstream", "circuit-a", "circuit-b", "unknown-x"}
@@ -332,7 +332,7 @@ func TestStateRandomizedUpdates(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestReadinessNotReadyWithoutDescription(t *testing.T) {
-	s := NewState("dev-1", testLogger())
+	s := NewState("dev-1", testLogger(), time.Hour)
 	r := s.Update("core", "voltage", []byte("120"))
 	if r.Ready {
 		t.Error("should not be ready without description")
@@ -343,7 +343,7 @@ func TestReadinessNotReadyWithoutDescription(t *testing.T) {
 }
 
 func TestReadinessLastPropertyTriggersReady(t *testing.T) {
-	s := NewState("dev-1", testLogger())
+	s := NewState("dev-1", testLogger(), time.Hour)
 
 	desc := DeviceDescription{
 		Nodes: map[string]NodeSchema{
@@ -387,7 +387,7 @@ func TestReadinessLastPropertyTriggersReady(t *testing.T) {
 }
 
 func TestReadinessDescriptionAfterAllProperties(t *testing.T) {
-	s := NewState("dev-1", testLogger())
+	s := NewState("dev-1", testLogger(), time.Hour)
 
 	// Send all properties BEFORE description
 	s.Update("core", "voltage", []byte("120"))
@@ -430,7 +430,7 @@ func TestReadinessDescriptionAfterAllProperties(t *testing.T) {
 }
 
 func TestReadinessMultipleNodes(t *testing.T) {
-	s := NewState("dev-1", testLogger())
+	s := NewState("dev-1", testLogger(), time.Hour)
 
 	desc := DeviceDescription{
 		Nodes: map[string]NodeSchema{
@@ -461,7 +461,7 @@ func TestReadinessMultipleNodes(t *testing.T) {
 }
 
 func TestReadinessExtraPropertiesDontBlock(t *testing.T) {
-	s := NewState("dev-1", testLogger())
+	s := NewState("dev-1", testLogger(), time.Hour)
 
 	desc := DeviceDescription{
 		Nodes: map[string]NodeSchema{
@@ -484,7 +484,7 @@ func TestReadinessExtraPropertiesDontBlock(t *testing.T) {
 }
 
 func TestReadinessEmptyDescription(t *testing.T) {
-	s := NewState("dev-1", testLogger())
+	s := NewState("dev-1", testLogger(), time.Hour)
 
 	desc := DeviceDescription{
 		Nodes: map[string]NodeSchema{
@@ -499,7 +499,7 @@ func TestReadinessEmptyDescription(t *testing.T) {
 }
 
 func TestReadinessUpdateResultTimestamp(t *testing.T) {
-	s := NewState("dev-1", testLogger())
+	s := NewState("dev-1", testLogger(), time.Hour)
 
 	before := time.Now()
 	r := s.Update("core", "voltage", []byte("120"))
@@ -514,7 +514,7 @@ func TestReadinessUpdateResultTimestamp(t *testing.T) {
 }
 
 func TestReadinessDuplicatePropertyNotDoubleCounted(t *testing.T) {
-	s := NewState("dev-1", testLogger())
+	s := NewState("dev-1", testLogger(), time.Hour)
 
 	desc := DeviceDescription{
 		Nodes: map[string]NodeSchema{
@@ -540,4 +540,163 @@ func TestReadinessDuplicatePropertyNotDoubleCounted(t *testing.T) {
 	if !r.Ready {
 		t.Error("should be ready now")
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Hybrid-readiness (grace timer) tests
+//
+// These exercise the grace-timer fallback that lets a node become ready even
+// when its $description lists properties the panel never publishes (e.g.
+// dipole on single-pole circuits in spanos3). A fake clock is used so the
+// timer can be advanced without sleeping.
+// ---------------------------------------------------------------------------
+
+type fakeClock struct{ t time.Time }
+
+func newFakeClock() *fakeClock {
+	return &fakeClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+}
+
+func (c *fakeClock) Now() time.Time          { return c.t }
+func (c *fakeClock) Advance(d time.Duration) { c.t = c.t.Add(d) }
+
+// describePartial sets up a state with a 3-property description so tests can
+// drive the strict and grace paths against the same shape.
+func describePartial(t *testing.T, s *State) {
+	t.Helper()
+	desc := DeviceDescription{
+		Nodes: map[string]NodeSchema{
+			"core": {
+				Properties: map[string]PropertySchema{
+					"voltage": {Datatype: "float"},
+					"power":   {Datatype: "float"},
+					"phantom": {Datatype: "boolean"},
+				},
+			},
+		},
+	}
+	data, _ := json.Marshal(desc)
+	if _, err := s.SetDescription(data); err != nil {
+		t.Fatalf("SetDescription: %v", err)
+	}
+}
+
+func TestReadinessGraceTimerFiresOnNextUpdate(t *testing.T) {
+	fc := newFakeClock()
+	s := NewState("dev-1", testLogger(), 3*time.Second)
+	s.nowFn = fc.Now
+	describePartial(t, s)
+
+	// Two of three described properties arrive — phantom never publishes.
+	r := s.Update("core", "voltage", []byte("120"))
+	if r.BecameReady {
+		t.Fatal("should not be ready after first property")
+	}
+	r = s.Update("core", "power", []byte("1500"))
+	if r.BecameReady {
+		t.Fatal("should not be ready before grace elapses")
+	}
+
+	// Grace elapses without phantom ever arriving.
+	fc.Advance(4 * time.Second)
+
+	// Next property update — duplicate voltage is fine — fires the timer.
+	r = s.Update("core", "voltage", []byte("121"))
+	if !r.BecameReady {
+		t.Fatal("expected BecameReady after grace elapsed with missing properties")
+	}
+	if !r.Ready {
+		t.Fatal("expected Ready=true after BecameReady")
+	}
+	if !s.IsNodeReady("core") {
+		t.Error("IsNodeReady should be true")
+	}
+}
+
+func TestReadinessStrictPathStillFiresBeforeGrace(t *testing.T) {
+	fc := newFakeClock()
+	s := NewState("dev-1", testLogger(), 1*time.Hour) // huge grace
+	s.nowFn = fc.Now
+	describePartial(t, s)
+
+	// All three described properties arrive within grace — strict match.
+	s.Update("core", "voltage", []byte("120"))
+	s.Update("core", "power", []byte("1500"))
+	r := s.Update("core", "phantom", []byte("true"))
+
+	if !r.BecameReady {
+		t.Fatal("strict path: BecameReady should fire on last property")
+	}
+}
+
+func TestReadinessGraceZeroDisablesFallback(t *testing.T) {
+	fc := newFakeClock()
+	s := NewState("dev-1", testLogger(), 0) // strict-only mode
+	s.nowFn = fc.Now
+	describePartial(t, s)
+
+	s.Update("core", "voltage", []byte("120"))
+	s.Update("core", "power", []byte("1500"))
+	fc.Advance(1 * time.Hour) // arbitrary far-future
+	r := s.Update("core", "voltage", []byte("121"))
+
+	if r.BecameReady || r.Ready {
+		t.Fatal("grace=0 should disable timer fallback; node must remain not-ready while phantom is missing")
+	}
+	if s.IsNodeReady("core") {
+		t.Error("IsNodeReady should remain false in strict-only mode with missing properties")
+	}
+}
+
+func TestReadinessGraceTimerFiresWhenDescriptionArrivesLate(t *testing.T) {
+	fc := newFakeClock()
+	s := NewState("dev-1", testLogger(), 100*time.Millisecond)
+	s.nowFn = fc.Now
+
+	// Properties arrive before description, then time passes past grace.
+	s.Update("core", "voltage", []byte("120"))
+	s.Update("core", "power", []byte("1500"))
+	fc.Advance(200 * time.Millisecond)
+
+	// Now the description arrives — node should be marked ready immediately.
+	readyNodes, err := s.SetDescription(mustMarshal(t, DeviceDescription{
+		Nodes: map[string]NodeSchema{
+			"core": {Properties: map[string]PropertySchema{
+				"voltage": {Datatype: "float"},
+				"power":   {Datatype: "float"},
+				"phantom": {Datatype: "boolean"},
+			}},
+		},
+	}))
+	if err != nil {
+		t.Fatalf("SetDescription: %v", err)
+	}
+	if len(readyNodes) != 1 || readyNodes[0] != "core" {
+		t.Fatalf("expected core to be in readyNodes, got %v", readyNodes)
+	}
+	if !s.IsNodeReady("core") {
+		t.Error("core should be ready (grace already elapsed when description arrived)")
+	}
+}
+
+func TestReadinessGraceDoesNotFireWithoutAnyMessage(t *testing.T) {
+	fc := newFakeClock()
+	s := NewState("dev-1", testLogger(), 100*time.Millisecond)
+	s.nowFn = fc.Now
+	describePartial(t, s)
+
+	// Time passes, but no message ever arrived for "core" — stays not ready.
+	fc.Advance(1 * time.Hour)
+	if s.IsNodeReady("core") {
+		t.Error("node with zero messages must never be marked ready by the timer")
+	}
+}
+
+func mustMarshal(t *testing.T, v interface{}) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return b
 }

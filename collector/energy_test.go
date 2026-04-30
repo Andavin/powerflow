@@ -39,7 +39,7 @@ func TestGetFloat(t *testing.T) {
 }
 
 func TestEnergyTrackerFirstCallBaseline(t *testing.T) {
-	s := NewState("dev-1", testLogger())
+	s := NewState("dev-1", testLogger(), time.Hour)
 	tracker := NewEnergyTracker(testLogger())
 
 	s.Update("lugs-upstream", "imported-energy", []byte("100.0"))
@@ -52,7 +52,7 @@ func TestEnergyTrackerFirstCallBaseline(t *testing.T) {
 }
 
 func TestEnergyTrackerSecondCallDelta(t *testing.T) {
-	s := NewState("dev-1", testLogger())
+	s := NewState("dev-1", testLogger(), time.Hour)
 	tracker := NewEnergyTracker(testLogger())
 
 	// First reading — baseline
@@ -104,7 +104,7 @@ func TestEnergyTrackerSecondCallDelta(t *testing.T) {
 }
 
 func TestEnergyTrackerCounterReset(t *testing.T) {
-	s := NewState("dev-1", testLogger())
+	s := NewState("dev-1", testLogger(), time.Hour)
 	tracker := NewEnergyTracker(testLogger())
 
 	s.Update("lugs-upstream", "imported-energy", []byte("100.0"))
@@ -124,7 +124,7 @@ func TestEnergyTrackerCounterReset(t *testing.T) {
 }
 
 func TestEnergyTrackerCircuitNode(t *testing.T) {
-	s := NewState("dev-1", testLogger())
+	s := NewState("dev-1", testLogger(), time.Hour)
 	tracker := NewEnergyTracker(testLogger())
 
 	// Circuit node — not in knownNodes or energyNodeInfo
@@ -151,7 +151,7 @@ func TestEnergyTrackerCircuitNode(t *testing.T) {
 }
 
 func TestEnergyTrackerCircuitNoName(t *testing.T) {
-	s := NewState("dev-1", testLogger())
+	s := NewState("dev-1", testLogger(), time.Hour)
 	tracker := NewEnergyTracker(testLogger())
 
 	// Circuit without a name property — should use node ID
@@ -174,7 +174,7 @@ func TestEnergyTrackerCircuitNoName(t *testing.T) {
 }
 
 func TestEnergyTrackerSkipsSystemNodes(t *testing.T) {
-	s := NewState("dev-1", testLogger())
+	s := NewState("dev-1", testLogger(), time.Hour)
 	tracker := NewEnergyTracker(testLogger())
 
 	// "core" is in knownNodes but NOT in energyNodeInfo → should be skipped
@@ -194,7 +194,7 @@ func TestEnergyTrackerSkipsSystemNodes(t *testing.T) {
 }
 
 func TestEnergyTrackerNoEnergyProps(t *testing.T) {
-	s := NewState("dev-1", testLogger())
+	s := NewState("dev-1", testLogger(), time.Hour)
 	tracker := NewEnergyTracker(testLogger())
 
 	s.Update("some-node", "voltage", []byte("120.0"))
@@ -207,7 +207,7 @@ func TestEnergyTrackerNoEnergyProps(t *testing.T) {
 }
 
 func TestEnergyTrackerMultipleNodes(t *testing.T) {
-	s := NewState("dev-1", testLogger())
+	s := NewState("dev-1", testLogger(), time.Hour)
 	tracker := NewEnergyTracker(testLogger())
 
 	// Baseline
@@ -259,7 +259,7 @@ func TestEnergyTrackerMultipleNodes(t *testing.T) {
 }
 
 func TestEnergyTrackerRandomized(t *testing.T) {
-	s := NewState("dev-1", testLogger())
+	s := NewState("dev-1", testLogger(), time.Hour)
 	tracker := NewEnergyTracker(testLogger())
 	r := rand.New(rand.NewSource(99))
 
