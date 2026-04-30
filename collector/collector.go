@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -29,14 +30,21 @@ func NewCollector(client mqtt.Client, state *State, cfg SpanConfig, logger *slog
 	}
 }
 
+// subscribeTimeout bounds the wait for SUBACK. A broker that accepts the
+// TCP/TLS handshake but never responds to SUBSCRIBE would otherwise hang
+// here forever.
+const subscribeTimeout = 10 * time.Second
+
 // Subscribe starts receiving messages from the SPAN panel.
 func (c *Collector) Subscribe() error {
 	c.logger.Info("subscribing to SPAN data", "topic", c.subTopic)
 
 	token := c.client.Subscribe(c.subTopic, 1, c.onMessage)
-	token.Wait()
-	if token.Error() != nil {
-		return token.Error()
+	if !token.WaitTimeout(subscribeTimeout) {
+		return fmt.Errorf("subscribe to %q timed out after %s", c.subTopic, subscribeTimeout)
+	}
+	if err := token.Error(); err != nil {
+		return err
 	}
 
 	c.logger.Info("subscribed successfully", "topic", c.subTopic)
