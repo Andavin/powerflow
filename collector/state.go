@@ -378,7 +378,20 @@ func (s *State) parseValue(node, property string, payload []byte) interface{} {
 	if s.description != nil {
 		if ns, ok := s.description.Nodes[node]; ok {
 			if ps, ok := ns.Properties[property]; ok {
-				return parseByDatatype(ps.Datatype, raw)
+				value, ok := parseByDatatype(ps.Datatype, raw)
+				if !ok {
+					// Datatype was numeric but raw didn't parse — value is now
+					// the raw string instead of the expected float/int. This
+					// produces a type-mismatch error at the QuestDB ILP flush
+					// layer with no per-property breadcrumb, so log here.
+					s.logger.Warn("property parse failed; using raw string",
+						"node", node,
+						"property", property,
+						"datatype", ps.Datatype,
+						"raw", raw,
+					)
+				}
+				return value
 			}
 		}
 	}
@@ -387,21 +400,32 @@ func (s *State) parseValue(node, property string, payload []byte) interface{} {
 	return parseInfer(raw)
 }
 
-func parseByDatatype(datatype, raw string) interface{} {
+// parseByDatatype converts raw to the type indicated by datatype. The second
+// return value reports whether parsing matched the requested datatype:
+//
+//   - true: value is float64/int64/bool/string per datatype.
+//   - false: datatype was numeric but raw didn't parse; value is the raw
+//     string (so the row is still recorded, but the caller may want to log).
+//
+// Boolean and string/enum/unknown datatypes never fail (boolean defaults to
+// false for anything not equal to "true").
+func parseByDatatype(datatype, raw string) (value interface{}, ok bool) {
 	switch datatype {
 	case "float":
 		if v, err := strconv.ParseFloat(raw, 64); err == nil {
-			return v
+			return v, true
 		}
+		return raw, false
 	case "integer":
 		if v, err := strconv.ParseInt(raw, 10, 64); err == nil {
-			return v
+			return v, true
 		}
+		return raw, false
 	case "boolean":
-		return strings.EqualFold(raw, "true")
+		return strings.EqualFold(raw, "true"), true
 	}
-	// string, enum, or parse failure
-	return raw
+	// string, enum, or unknown — raw IS the expected representation
+	return raw, true
 }
 
 func parseInfer(raw string) interface{} {

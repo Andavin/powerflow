@@ -176,27 +176,32 @@ func TestParseByDatatype(t *testing.T) {
 		datatype string
 		raw      string
 		expect   interface{}
+		expectOK bool
 	}{
-		{"float", "3.14", 3.14},
-		{"float", "42", 42.0},
-		{"float", "not-a-number", "not-a-number"},
-		{"integer", "42", int64(42)},
-		{"integer", "not-int", "not-int"},
-		{"boolean", "true", true},
-		{"boolean", "True", true},
-		{"boolean", "false", false},
-		{"boolean", "FALSE", false},
-		{"string", "hello", "hello"},
-		{"enum", "CLOSED", "CLOSED"},
-		{"unknown-type", "value", "value"},
+		{"float", "3.14", 3.14, true},
+		{"float", "42", 42.0, true},
+		{"float", "not-a-number", "not-a-number", false},
+		{"integer", "42", int64(42), true},
+		{"integer", "not-int", "not-int", false},
+		{"boolean", "true", true, true},
+		{"boolean", "True", true, true},
+		{"boolean", "false", false, true},
+		{"boolean", "FALSE", false, true},
+		{"string", "hello", "hello", true},
+		{"enum", "CLOSED", "CLOSED", true},
+		{"unknown-type", "value", "value", true},
 	}
 
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%s/%s", tt.datatype, tt.raw), func(t *testing.T) {
-			got := parseByDatatype(tt.datatype, tt.raw)
+			got, gotOK := parseByDatatype(tt.datatype, tt.raw)
 			if got != tt.expect {
-				t.Errorf("parseByDatatype(%q, %q) = %v (%T), want %v (%T)",
+				t.Errorf("parseByDatatype(%q, %q) = (%v %T, _), want %v (%T)",
 					tt.datatype, tt.raw, got, got, tt.expect, tt.expect)
+			}
+			if gotOK != tt.expectOK {
+				t.Errorf("parseByDatatype(%q, %q) ok = %v, want %v",
+					tt.datatype, tt.raw, gotOK, tt.expectOK)
 			}
 		})
 	}
