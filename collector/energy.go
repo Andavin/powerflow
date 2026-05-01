@@ -125,6 +125,15 @@ func (t *EnergyTracker) Process(state *State) []EnergyDelta {
 			continue
 		}
 
+		// No energy moved this period in either direction — skip the delta to
+		// keep power_usage from filling with mostly-zero rows. The cache was
+		// already updated above, so the next non-zero delta correctly covers
+		// only the period since this skipped reading (we do NOT inflate the
+		// next period to span over skipped readings).
+		if impDelta == 0 && expDelta == 0 {
+			continue
+		}
+
 		deltas = append(deltas, EnergyDelta{
 			NodeID:     nodeID,
 			NodeType:   nodeType,

@@ -164,6 +164,97 @@ func TestEnergyTrackerCounterResetRebasesBaseline(t *testing.T) {
 	}
 }
 
+// TestEnergyTrackerSkipsZeroDelta verifies that a reading where neither the
+// imported nor exported counter advanced produces NO delta — keeping the
+// power_usage table from filling with rows that contribute nothing.
+func TestEnergyTrackerSkipsZeroDelta(t *testing.T) {
+	s := NewState("dev-1", testLogger(), time.Hour)
+	tracker := NewEnergyTracker(testLogger())
+
+	s.Update("lugs-upstream", "imported-energy", []byte("100.0"))
+	s.Update("lugs-upstream", "exported-energy", []byte("50.0"))
+	tracker.Process(s)
+	time.Sleep(2 * time.Millisecond)
+
+	// Same values — no energy moved this period.
+	s.Update("lugs-upstream", "imported-energy", []byte("100.0"))
+	s.Update("lugs-upstream", "exported-energy", []byte("50.0"))
+	deltas := tracker.Process(s)
+
+	if len(deltas) != 0 {
+		t.Errorf("expected 0 deltas when both counters unchanged, got %d", len(deltas))
+	}
+}
+
+// TestEnergyTrackerEmitsWhenOnlyOneCounterMoves verifies that we still emit
+// a delta when only one of imported/exported changed — the user explicitly wants
+// asymmetric movement (e.g., importing without exporting) recorded.
+func TestEnergyTrackerEmitsWhenOnlyOneCounterMoves(t *testing.T) {
+	s := NewState("dev-1", testLogger(), time.Hour)
+	tracker := NewEnergyTracker(testLogger())
+
+	s.Update("lugs-upstream", "imported-energy", []byte("100.0"))
+	s.Update("lugs-upstream", "exported-energy", []byte("50.0"))
+	tracker.Process(s)
+	time.Sleep(2 * time.Millisecond)
+
+	// Only imported moved.
+	s.Update("lugs-upstream", "imported-energy", []byte("110.0"))
+	s.Update("lugs-upstream", "exported-energy", []byte("50.0"))
+	d := tracker.Process(s)
+	if len(d) != 1 || d[0].ImportedWh != 10.0 || d[0].ExportedWh != 0.0 {
+		t.Fatalf("imported-only: expected 1 delta (10, 0), got %+v", d)
+	}
+	time.Sleep(2 * time.Millisecond)
+
+	// Only exported moved.
+	s.Update("lugs-upstream", "imported-energy", []byte("110.0"))
+	s.Update("lugs-upstream", "exported-energy", []byte("55.0"))
+	d = tracker.Process(s)
+	if len(d) != 1 || d[0].ImportedWh != 0.0 || d[0].ExportedWh != 5.0 {
+		t.Fatalf("exported-only: expected 1 delta (0, 5), got %+v", d)
+	}
+}
+
+// TestEnergyTrackerZeroSkipDoesNotInflateNextPeriod verifies the cache-update
+// invariant after a zero-delta skip: the next non-zero delta covers only the
+// time since the LAST observation (the skipped reading), not the time since
+// the last EMITTED reading. Otherwise a long idle window would attribute a
+// late energy increment to a much longer period and underreport avg power.
+func TestEnergyTrackerZeroSkipDoesNotInflateNextPeriod(t *testing.T) {
+	s := NewState("dev-1", testLogger(), time.Hour)
+	tracker := NewEnergyTracker(testLogger())
+
+	s.Update("lugs-upstream", "imported-energy", []byte("100.0"))
+	s.Update("lugs-upstream", "exported-energy", []byte("50.0"))
+	tracker.Process(s) // baseline cached, no delta
+	time.Sleep(10 * time.Millisecond)
+
+	// Zero-delta — should be skipped, but cache must update so the next
+	// delta's period starts here, not 10ms ago.
+	s.Update("lugs-upstream", "imported-energy", []byte("100.0"))
+	s.Update("lugs-upstream", "exported-energy", []byte("50.0"))
+	if d := tracker.Process(s); len(d) != 0 {
+		t.Fatalf("expected zero-delta reading to be skipped, got %d deltas", len(d))
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	// Non-zero — period should be ~10ms (since the skipped reading), not ~20ms
+	// (since the baseline). Allow a wide margin for sleep jitter on shared CI.
+	s.Update("lugs-upstream", "imported-energy", []byte("110.0"))
+	s.Update("lugs-upstream", "exported-energy", []byte("50.0"))
+	d := tracker.Process(s)
+	if len(d) != 1 {
+		t.Fatalf("expected 1 delta, got %d", len(d))
+	}
+	if d[0].PeriodMs > 18 { // 10ms expected, allow up to ~18ms for jitter
+		t.Errorf("period = %vms, want ~10ms (NOT ~20ms — that would mean cache wasn't updated on skip)", d[0].PeriodMs)
+	}
+	if d[0].ImportedWh != 10.0 {
+		t.Errorf("imported delta = %v, want 10.0", d[0].ImportedWh)
+	}
+}
+
 func TestEnergyTrackerCircuitNode(t *testing.T) {
 	s := NewState("dev-1", testLogger(), time.Hour)
 	tracker := NewEnergyTracker(testLogger())
