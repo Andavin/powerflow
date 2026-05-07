@@ -69,34 +69,6 @@ func main() {
 	// ---- State --------------------------------------------------------
 	state := NewState(cfg.Span.DeviceID, logger, cfg.Span.parsedReadinessGrace)
 
-	// ---- MQTT client --------------------------------------------------
-	client, err := createMQTTClient(cfg, logger)
-	if err != nil {
-		logger.Error("failed to create MQTT client", "error", err)
-		os.Exit(1)
-	}
-
-	logger.Info("connecting to MQTT broker", "url", cfg.MQTT.BrokerURL())
-	token := client.Connect()
-	if !token.WaitTimeout(15 * time.Second) {
-		// With SetConnectRetry(false) the token should normally complete
-		// (success or specific failure). A timeout here means the broker
-		// never produced a CONNACK or TLS handshake — i.e. unreachable.
-		if err := token.Error(); err != nil {
-			logger.Error("MQTT connect failed (timed out waiting for completion)", "error", err)
-		} else {
-			logger.Error("MQTT connect timed out — broker unreachable or unresponsive",
-				"url", cfg.MQTT.BrokerURL())
-		}
-		os.Exit(1)
-	}
-	if err := token.Error(); err != nil {
-		logger.Error("MQTT connect failed", "error", err)
-		os.Exit(1)
-	}
-	// Note: Disconnect is called explicitly after the writer drains during
-	// graceful shutdown; no defer needed here.
-
 	// ---- QuestDB ------------------------------------------------------
 	qdbWriter, err := NewQuestDBWriter(cfg.QuestDB, cfg.Span.DeviceID, logger)
 	if err != nil {
@@ -147,10 +119,9 @@ func main() {
 		}
 	}()
 
-	// ---- Subscriber ---------------------------------------------------
-	// The onUpdate callback fires for every MQTT property update once the
-	// state is ready (all described properties received at least once).
-	// On BecameReady, it queues the initial snapshot for ALL nodes.
+	// ---- Collector + MQTT client --------------------------------------
+	// onUpdate fires for every MQTT property update once a node is ready.
+	// On BecameReady, it queues the initial snapshot for that node.
 	onUpdate := func(result UpdateResult) {
 		if result.BecameReady {
 			logger.Info("node ready — all described properties received", "node", result.NodeID)
@@ -162,11 +133,39 @@ func main() {
 		}
 	}
 
-	collector := NewCollector(client, state, cfg.Span, logger, onUpdate)
-	if err := collector.Subscribe(); err != nil {
-		logger.Error("subscription failed", "error", err)
+	collector := NewCollector(state, cfg.Span, logger, onUpdate)
+
+	// The MQTT client subscribes from inside its OnConnect handler so that
+	// re-subscribe happens automatically on every reconnect (the panel
+	// rotates its TLS cert daily and force-disconnects, and CleanSession
+	// defaults to true so the broker forgets subscriptions on drop).
+	client, err := createMQTTClient(cfg, logger, collector.OnMessage)
+	if err != nil {
+		logger.Error("failed to create MQTT client", "error", err)
 		os.Exit(1)
 	}
+
+	logger.Info("connecting to MQTT broker", "url", cfg.MQTT.BrokerURL())
+	token := client.Connect()
+	if !token.WaitTimeout(15 * time.Second) {
+		// With SetConnectRetry(false) the token should normally complete
+		// (success or specific failure). A timeout here means the broker
+		// never produced a CONNACK or TLS handshake — i.e. unreachable.
+		if err := token.Error(); err != nil {
+			logger.Error("MQTT connect failed (timed out waiting for completion)", "error", err)
+		} else {
+			logger.Error("MQTT connect timed out — broker unreachable or unresponsive",
+				"url", cfg.MQTT.BrokerURL())
+		}
+		os.Exit(1)
+	}
+	if err := token.Error(); err != nil {
+		logger.Error("MQTT connect failed", "error", err)
+		os.Exit(1)
+	}
+	// Subscribe is handled by the OnConnect handler — no explicit call
+	// needed here. Disconnect is called explicitly during graceful shutdown
+	// after the writer drains; no defer needed here.
 
 	// ---- Signal handling ----------------------------------------------
 	sigCh := make(chan os.Signal, 1)
@@ -211,7 +210,12 @@ func flushBatch(batch []pendingWrite, qdb *QuestDBWriter, energy *EnergyTracker,
 // MQTT client factory
 // ---------------------------------------------------------------------------
 
-func createMQTTClient(cfg *Config, logger *slog.Logger) (mqtt.Client, error) {
+// subscribeTimeout bounds the wait for SUBACK from inside the OnConnect
+// handler. A broker that accepts the TCP/TLS handshake but never responds
+// to SUBSCRIBE would otherwise hang Paho's connect goroutine forever.
+const subscribeTimeout = 10 * time.Second
+
+func createMQTTClient(cfg *Config, logger *slog.Logger, msgHandler mqtt.MessageHandler) (mqtt.Client, error) {
 	opts := mqtt.NewClientOptions()
 	opts.AddBroker(cfg.MQTT.BrokerURL())
 	opts.SetClientID(cfg.MQTT.ClientID)
@@ -240,8 +244,32 @@ func createMQTTClient(cfg *Config, logger *slog.Logger) (mqtt.Client, error) {
 	opts.SetConnectTimeout(10 * time.Second)
 	opts.SetOrderMatters(false)
 
-	opts.SetOnConnectHandler(func(_ mqtt.Client) {
+	// Default publish handler routes every incoming message — the
+	// per-subscription handler can be nil since this is the only subscription.
+	opts.SetDefaultPublishHandler(msgHandler)
+
+	subTopic := cfg.Span.SubscribeTopic()
+
+	// OnConnect fires on initial connect AND every reconnect. Subscribing
+	// here (instead of once at startup) guarantees the subscription is
+	// re-established after the panel's daily TLS-rotation disconnect.
+	// CleanSession defaults to true, so the broker forgets subscriptions
+	// across drops; without this re-subscribe we'd reconnect cleanly but
+	// receive nothing.
+	opts.SetOnConnectHandler(func(c mqtt.Client) {
 		logger.Info("MQTT connected", "broker", cfg.MQTT.BrokerURL())
+
+		token := c.Subscribe(subTopic, 1, nil)
+		if !token.WaitTimeout(subscribeTimeout) {
+			logger.Error("MQTT subscribe timed out — no SUBACK from broker",
+				"topic", subTopic, "timeout", subscribeTimeout)
+			return
+		}
+		if err := token.Error(); err != nil {
+			logger.Error("MQTT subscribe failed", "topic", subTopic, "error", err)
+			return
+		}
+		logger.Info("MQTT subscribed", "topic", subTopic)
 	})
 	opts.SetConnectionLostHandler(func(_ mqtt.Client, err error) {
 		logger.Warn("MQTT connection lost (auto-reconnect enabled)", "error", err)

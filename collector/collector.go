@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -9,46 +8,26 @@ import (
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
-// Collector subscribes to the SPAN panel's MQTT topics and updates State.
+// Collector parses incoming MQTT messages and routes property updates into
+// State. It does NOT own the MQTT client or its subscription lifecycle —
+// subscribing happens in createMQTTClient's OnConnect handler so that it
+// fires on initial connect AND every reconnect (the panel rotates its TLS
+// cert daily and force-disconnects all clients, requiring re-subscribe
+// since CleanSession=true means the broker forgets subscriptions on drop).
 type Collector struct {
-	client    mqtt.Client
 	state     *State
 	topicBase string // e.g. "ebus/5/REPLACE-WITH-YOUR-PANEL-SERIAL/"
-	subTopic  string // e.g. "ebus/5/REPLACE-WITH-YOUR-PANEL-SERIAL/#"
 	logger    *slog.Logger
 	onUpdate  func(UpdateResult) // called after each state update when ready
 }
 
-func NewCollector(client mqtt.Client, state *State, cfg SpanConfig, logger *slog.Logger, onUpdate func(UpdateResult)) *Collector {
+func NewCollector(state *State, cfg SpanConfig, logger *slog.Logger, onUpdate func(UpdateResult)) *Collector {
 	return &Collector{
-		client:    client,
 		state:     state,
 		topicBase: cfg.TopicBase(),
-		subTopic:  cfg.SubscribeTopic(),
 		logger:    logger.With("component", "collector"),
 		onUpdate:  onUpdate,
 	}
-}
-
-// subscribeTimeout bounds the wait for SUBACK. A broker that accepts the
-// TCP/TLS handshake but never responds to SUBSCRIBE would otherwise hang
-// here forever.
-const subscribeTimeout = 10 * time.Second
-
-// Subscribe starts receiving messages from the SPAN panel.
-func (c *Collector) Subscribe() error {
-	c.logger.Info("subscribing to SPAN data", "topic", c.subTopic)
-
-	token := c.client.Subscribe(c.subTopic, 1, c.onMessage)
-	if !token.WaitTimeout(subscribeTimeout) {
-		return fmt.Errorf("subscribe to %q timed out after %s", c.subTopic, subscribeTimeout)
-	}
-	if err := token.Error(); err != nil {
-		return err
-	}
-
-	c.logger.Info("subscribed successfully", "topic", c.subTopic)
-	return nil
 }
 
 // topicResult describes the parsed outcome of an MQTT topic.
@@ -94,7 +73,9 @@ func parseTopic(topicBase, fullTopic string) topicResult {
 	return topicResult{Node: node, Property: property}
 }
 
-func (c *Collector) onMessage(_ mqtt.Client, msg mqtt.Message) {
+// OnMessage is the Paho MessageHandler. It's exported so it can be passed
+// to createMQTTClient as the client's default publish handler.
+func (c *Collector) OnMessage(_ mqtt.Client, msg mqtt.Message) {
 	topic := msg.Topic()
 	payload := msg.Payload()
 
