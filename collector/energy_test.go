@@ -39,7 +39,7 @@ func TestGetFloat(t *testing.T) {
 }
 
 func TestEnergyTrackerFirstCallBaseline(t *testing.T) {
-	s := NewState("dev-1", testLogger(), time.Hour)
+	s := newPostDescState(t, time.Hour)
 	tracker := NewEnergyTracker(testLogger())
 
 	s.Update("lugs-upstream", "imported-energy", []byte("100.0"))
@@ -52,7 +52,7 @@ func TestEnergyTrackerFirstCallBaseline(t *testing.T) {
 }
 
 func TestEnergyTrackerSecondCallDelta(t *testing.T) {
-	s := NewState("dev-1", testLogger(), time.Hour)
+	s := newPostDescState(t, time.Hour)
 	tracker := NewEnergyTracker(testLogger())
 
 	// First reading — baseline
@@ -104,7 +104,7 @@ func TestEnergyTrackerSecondCallDelta(t *testing.T) {
 }
 
 func TestEnergyTrackerCounterReset(t *testing.T) {
-	s := NewState("dev-1", testLogger(), time.Hour)
+	s := newPostDescState(t, time.Hour)
 	tracker := NewEnergyTracker(testLogger())
 
 	s.Update("lugs-upstream", "imported-energy", []byte("100.0"))
@@ -128,7 +128,7 @@ func TestEnergyTrackerCounterReset(t *testing.T) {
 // relative to the post-reset value — not relative to the pre-reset baseline.
 // (Regression guard for the cache-update ordering in Process.)
 func TestEnergyTrackerCounterResetRebasesBaseline(t *testing.T) {
-	s := NewState("dev-1", testLogger(), time.Hour)
+	s := newPostDescState(t, time.Hour)
 	tracker := NewEnergyTracker(testLogger())
 
 	// Establish a high baseline.
@@ -168,7 +168,7 @@ func TestEnergyTrackerCounterResetRebasesBaseline(t *testing.T) {
 // imported nor exported counter advanced produces NO delta — keeping the
 // power_usage table from filling with rows that contribute nothing.
 func TestEnergyTrackerSkipsZeroDelta(t *testing.T) {
-	s := NewState("dev-1", testLogger(), time.Hour)
+	s := newPostDescState(t, time.Hour)
 	tracker := NewEnergyTracker(testLogger())
 
 	s.Update("lugs-upstream", "imported-energy", []byte("100.0"))
@@ -190,7 +190,7 @@ func TestEnergyTrackerSkipsZeroDelta(t *testing.T) {
 // a delta when only one of imported/exported changed — the user explicitly wants
 // asymmetric movement (e.g., importing without exporting) recorded.
 func TestEnergyTrackerEmitsWhenOnlyOneCounterMoves(t *testing.T) {
-	s := NewState("dev-1", testLogger(), time.Hour)
+	s := newPostDescState(t, time.Hour)
 	tracker := NewEnergyTracker(testLogger())
 
 	s.Update("lugs-upstream", "imported-energy", []byte("100.0"))
@@ -222,7 +222,7 @@ func TestEnergyTrackerEmitsWhenOnlyOneCounterMoves(t *testing.T) {
 // the last EMITTED reading. Otherwise a long idle window would attribute a
 // late energy increment to a much longer period and underreport avg power.
 func TestEnergyTrackerZeroSkipDoesNotInflateNextPeriod(t *testing.T) {
-	s := NewState("dev-1", testLogger(), time.Hour)
+	s := newPostDescState(t, time.Hour)
 	tracker := NewEnergyTracker(testLogger())
 
 	s.Update("lugs-upstream", "imported-energy", []byte("100.0"))
@@ -256,7 +256,7 @@ func TestEnergyTrackerZeroSkipDoesNotInflateNextPeriod(t *testing.T) {
 }
 
 func TestEnergyTrackerCircuitNode(t *testing.T) {
-	s := NewState("dev-1", testLogger(), time.Hour)
+	s := newPostDescState(t, time.Hour)
 	tracker := NewEnergyTracker(testLogger())
 
 	// Circuit node — not in knownNodes or energyNodeInfo
@@ -283,7 +283,7 @@ func TestEnergyTrackerCircuitNode(t *testing.T) {
 }
 
 func TestEnergyTrackerCircuitNoName(t *testing.T) {
-	s := NewState("dev-1", testLogger(), time.Hour)
+	s := newPostDescState(t, time.Hour)
 	tracker := NewEnergyTracker(testLogger())
 
 	// Circuit without a name property — should use node ID
@@ -306,7 +306,7 @@ func TestEnergyTrackerCircuitNoName(t *testing.T) {
 }
 
 func TestEnergyTrackerSkipsSystemNodes(t *testing.T) {
-	s := NewState("dev-1", testLogger(), time.Hour)
+	s := newPostDescState(t, time.Hour)
 	tracker := NewEnergyTracker(testLogger())
 
 	// "core" is in knownNodes but NOT in energyNodeInfo → should be skipped
@@ -326,7 +326,7 @@ func TestEnergyTrackerSkipsSystemNodes(t *testing.T) {
 }
 
 func TestEnergyTrackerNoEnergyProps(t *testing.T) {
-	s := NewState("dev-1", testLogger(), time.Hour)
+	s := newPostDescState(t, time.Hour)
 	tracker := NewEnergyTracker(testLogger())
 
 	s.Update("some-node", "voltage", []byte("120.0"))
@@ -339,7 +339,7 @@ func TestEnergyTrackerNoEnergyProps(t *testing.T) {
 }
 
 func TestEnergyTrackerMultipleNodes(t *testing.T) {
-	s := NewState("dev-1", testLogger(), time.Hour)
+	s := newPostDescState(t, time.Hour)
 	tracker := NewEnergyTracker(testLogger())
 
 	// Baseline
@@ -391,7 +391,7 @@ func TestEnergyTrackerMultipleNodes(t *testing.T) {
 }
 
 func TestEnergyTrackerRandomized(t *testing.T) {
-	s := NewState("dev-1", testLogger(), time.Hour)
+	s := newPostDescState(t, time.Hour)
 	tracker := NewEnergyTracker(testLogger())
 	r := rand.New(rand.NewSource(99))
 

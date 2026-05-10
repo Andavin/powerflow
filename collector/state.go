@@ -90,6 +90,24 @@ type State struct {
 	// nowFn is overridable in tests so the readiness timer can be advanced
 	// without sleeping. Defaults to time.Now in NewState.
 	nowFn func() time.Time
+
+	// Pending buffer: property updates that arrived before $description.
+	// On a fresh connection, Homie 5 retained messages can land in any
+	// order, and parseInfer's type guess for an early property write would
+	// auto-create the QuestDB column with the wrong type (e.g. LONG for
+	// "59937") that later parseByDatatype string writes can't fit. We
+	// buffer pre-description updates and replay them in SetDescription so
+	// the FIRST ILP write always uses the description's declared datatype.
+	pending []pendingUpdate
+}
+
+// pendingUpdate is a snapshot of an MQTT property update that arrived before
+// $description was loaded. The payload is copied so the caller can reuse the
+// underlying buffer.
+type pendingUpdate struct {
+	node, property string
+	payload        []byte
+	arrivedAt      time.Time
 }
 
 // NewState constructs a State for the given device. readinessGrace is the
@@ -111,9 +129,9 @@ func NewState(deviceID string, logger *slog.Logger, readinessGrace time.Duration
 	}
 }
 
-// SetDescription parses and stores the Homie $description payload.
-// Returns the list of node IDs that became ready as a result (their
-// described properties were already received before $description arrived).
+// SetDescription parses and stores the Homie $description payload, then
+// replays any updates that arrived before description was loaded.
+// Returns the list of node IDs that became ready as a result.
 func (s *State) SetDescription(data []byte) (readyNodeIDs []string, err error) {
 	var desc DeviceDescription
 	if err := json.Unmarshal(data, &desc); err != nil {
@@ -121,7 +139,27 @@ func (s *State) SetDescription(data []byte) (readyNodeIDs []string, err error) {
 	}
 
 	s.mu.Lock()
+
+	// Snapshot the buffer and clear before setting description so each
+	// applyUpdateLocked call sees s.description != nil and goes through
+	// parseByDatatype rather than parseInfer.
+	pending := s.pending
+	s.pending = nil
 	s.description = &desc
+
+	// Replay buffered updates. This is the column-type-locking fix: the
+	// first ILP write of every described property now uses the type the
+	// panel declares, not whatever parseInfer guesses from the raw bytes.
+	bufferedReady := make(map[string]bool, len(pending))
+	for _, p := range pending {
+		result := s.applyUpdateLocked(p.node, p.property, p.payload, p.arrivedAt)
+		if result.BecameReady {
+			bufferedReady[p.node] = true
+		}
+	}
+	for nodeID := range bufferedReady {
+		readyNodeIDs = append(readyNodeIDs, nodeID)
+	}
 
 	// Check each described node — if all its properties already received, mark ready
 	for nodeID := range desc.Nodes {
@@ -157,20 +195,44 @@ func (s *State) SetDescription(data []byte) (readyNodeIDs []string, err error) {
 		"circuits", circuitCount,
 		"total_properties", totalProps,
 		"nodes_immediately_ready", len(readyNodeIDs),
+		"buffered_updates_replayed", len(pending),
 	)
 	return readyNodeIDs, nil
 }
 
 // Update stores a single property value, parsing it according to the schema.
+// If $description has not yet been loaded, the update is buffered and replayed
+// from SetDescription so the FIRST parse of every property is description-aware
+// (preventing parseInfer from guessing a type that conflicts with the
+// description's declared datatype).
 func (s *State) Update(node, property string, payload []byte) UpdateResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	now := s.nowFn()
+
+	if s.description == nil {
+		// Copy payload — Paho reuses the underlying buffer between calls.
+		buf := make([]byte, len(payload))
+		copy(buf, payload)
+		s.pending = append(s.pending, pendingUpdate{
+			node: node, property: property,
+			payload: buf, arrivedAt: now,
+		})
+		return UpdateResult{NodeID: node, Timestamp: now}
+	}
+
+	return s.applyUpdateLocked(node, property, payload, now)
+}
+
+// applyUpdateLocked is the unbuffered update path, shared between Update (for
+// post-description messages) and SetDescription (for replaying buffered ones).
+// Caller must hold s.mu for writing.
+func (s *State) applyUpdateLocked(node, property string, payload []byte, now time.Time) UpdateResult {
 	if s.values[node] == nil {
 		s.values[node] = make(map[string]interface{})
 	}
 
-	now := s.nowFn()
 	s.values[node][property] = s.parseValue(node, property, payload)
 	s.nodeUpdated[node] = now
 	s.lastUpdate = now

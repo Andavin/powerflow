@@ -14,6 +14,21 @@ func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+// newPostDescState returns a State with an empty $description already loaded
+// so subsequent Update calls go through the immediate-apply path. Use this
+// in tests that just want to exercise Update→NodeValues plumbing without
+// modeling the production subscribe-then-description startup flow that
+// drives the pre-description buffering. Tests that DO test buffering /
+// readiness behavior should use NewState directly and load their own desc.
+func newPostDescState(t *testing.T, grace time.Duration) *State {
+	t.Helper()
+	s := NewState("dev-1", testLogger(), grace)
+	if _, err := s.SetDescription([]byte("{}")); err != nil {
+		t.Fatalf("SetDescription: %v", err)
+	}
+	return s
+}
+
 func TestNewState(t *testing.T) {
 	s := NewState("dev-1", testLogger(), time.Hour)
 	if s == nil {
@@ -26,7 +41,7 @@ func TestNewState(t *testing.T) {
 }
 
 func TestStateUpdateAndRead(t *testing.T) {
-	s := NewState("dev-1", testLogger(), time.Hour)
+	s := newPostDescState(t, time.Hour)
 
 	s.Update("core", "voltage", []byte("120.5"))
 	s.Update("core", "relay-state", []byte("CLOSED"))
@@ -62,7 +77,7 @@ func TestStateNodeValuesReturnsNilForMissing(t *testing.T) {
 }
 
 func TestStateNodeValuesCopy(t *testing.T) {
-	s := NewState("dev-1", testLogger(), time.Hour)
+	s := newPostDescState(t, time.Hour)
 	s.Update("n1", "key", []byte("value"))
 
 	copy1 := s.NodeValues("n1")
@@ -75,7 +90,7 @@ func TestStateNodeValuesCopy(t *testing.T) {
 }
 
 func TestStateStats(t *testing.T) {
-	s := NewState("dev-1", testLogger(), time.Hour)
+	s := newPostDescState(t, time.Hour)
 
 	msgCount, nodeCount, circuitCount, lastUpdate := s.Stats()
 	if msgCount != 0 || nodeCount != 0 || circuitCount != 0 {
@@ -105,7 +120,7 @@ func TestStateStats(t *testing.T) {
 }
 
 func TestStateNodeLastUpdate(t *testing.T) {
-	s := NewState("dev-1", testLogger(), time.Hour)
+	s := newPostDescState(t, time.Hour)
 
 	if !s.NodeLastUpdate("core").IsZero() {
 		t.Error("expected zero time for unseen node")
@@ -302,7 +317,7 @@ func TestParseValueWithSchema(t *testing.T) {
 }
 
 func TestStateRandomizedUpdates(t *testing.T) {
-	s := NewState("dev-1", testLogger(), time.Hour)
+	s := newPostDescState(t, time.Hour)
 	r := rand.New(rand.NewSource(42))
 
 	nodeIDs := []string{"core", "lugs-upstream", "circuit-a", "circuit-b", "unknown-x"}
@@ -704,4 +719,134 @@ func mustMarshal(t *testing.T, v interface{}) []byte {
 		t.Fatalf("marshal: %v", err)
 	}
 	return b
+}
+
+// ---------------------------------------------------------------------------
+// Pre-description buffering tests
+//
+// These exercise the column-type-locking fix: if property updates arrive
+// before $description, they're buffered and replayed once description loads,
+// so the first ILP write of every property uses the description's declared
+// datatype (preventing parseInfer from creating a numeric column for what
+// description says is a string).
+// ---------------------------------------------------------------------------
+
+func TestUpdateBuffersWhenNoDescription(t *testing.T) {
+	s := NewState("dev-1", testLogger(), time.Hour)
+
+	r := s.Update("core", "voltage", []byte("120"))
+	if r.Ready || r.BecameReady {
+		t.Error("update with no description should NOT be ready")
+	}
+	// Value should NOT be in state yet — it's buffered.
+	if vals := s.NodeValues("core"); vals != nil {
+		t.Errorf("core values should be empty (buffered), got %v", vals)
+	}
+	if s.HasDescription() {
+		t.Error("description should not be loaded")
+	}
+}
+
+func TestSetDescriptionDrainsBufferWithDeclaredType(t *testing.T) {
+	s := NewState("dev-1", testLogger(), time.Hour)
+
+	// Buffer an update for a property whose description says STRING. parseInfer
+	// would have returned int64(0) for "0" — but with description loaded first,
+	// the replay must yield the raw string "0".
+	s.Update("core", "postal-code", []byte("59937"))
+	s.Update("core", "hardware-version", []byte("2.0"))
+
+	desc := DeviceDescription{
+		Nodes: map[string]NodeSchema{
+			"core": {Properties: map[string]PropertySchema{
+				"postal-code":      {Datatype: "string"},
+				"hardware-version": {Datatype: "string"},
+			}},
+		},
+	}
+	if _, err := s.SetDescription(mustMarshal(t, desc)); err != nil {
+		t.Fatalf("SetDescription: %v", err)
+	}
+
+	vals := s.NodeValues("core")
+	if vals == nil {
+		t.Fatal("core values should be populated after SetDescription drained the buffer")
+	}
+	// Both should be strings (matching the description's declared datatype),
+	// NOT inferred numerics.
+	if v, ok := vals["postal-code"].(string); !ok || v != "59937" {
+		t.Errorf("postal-code = %v (%T), want string \"59937\"", vals["postal-code"], vals["postal-code"])
+	}
+	if v, ok := vals["hardware-version"].(string); !ok || v != "2.0" {
+		t.Errorf("hardware-version = %v (%T), want string \"2.0\"", vals["hardware-version"], vals["hardware-version"])
+	}
+}
+
+func TestSetDescriptionDrainsUndescribedPropertyViaInfer(t *testing.T) {
+	s := NewState("dev-1", testLogger(), time.Hour)
+
+	// Buffer an update for a node that won't appear in $description.
+	s.Update("undescribed-node", "v", []byte("42"))
+
+	// Empty description — node is unknown.
+	if _, err := s.SetDescription([]byte(`{"nodes":{}}`)); err != nil {
+		t.Fatalf("SetDescription: %v", err)
+	}
+
+	vals := s.NodeValues("undescribed-node")
+	if vals == nil {
+		t.Fatal("undescribed-node values should be populated")
+	}
+	// parseInfer returns int64 for "42" (no decimal); that's the expected
+	// fallback for properties not in the description.
+	if v, ok := vals["v"].(int64); !ok || v != 42 {
+		t.Errorf("v = %v (%T), want int64(42)", vals["v"], vals["v"])
+	}
+}
+
+func TestRepeatedSetDescriptionDoesntDoubleApplyBuffer(t *testing.T) {
+	s := NewState("dev-1", testLogger(), time.Hour)
+
+	s.Update("core", "voltage", []byte("120"))
+
+	desc := DeviceDescription{
+		Nodes: map[string]NodeSchema{
+			"core": {Properties: map[string]PropertySchema{
+				"voltage": {Datatype: "float"},
+			}},
+		},
+	}
+	if _, err := s.SetDescription(mustMarshal(t, desc)); err != nil {
+		t.Fatalf("first SetDescription: %v", err)
+	}
+
+	// msgCount should be 1 after the buffered update was replayed.
+	mc1, _, _, _ := s.Stats()
+	if mc1 != 1 {
+		t.Fatalf("msgCount after first SetDescription = %d, want 1", mc1)
+	}
+
+	// Second SetDescription with the same payload — the panel republishes
+	// $description regularly. The pending buffer should be empty so nothing
+	// is replayed; msgCount stays at 1.
+	if _, err := s.SetDescription(mustMarshal(t, desc)); err != nil {
+		t.Fatalf("second SetDescription: %v", err)
+	}
+	mc2, _, _, _ := s.Stats()
+	if mc2 != 1 {
+		t.Errorf("msgCount after second SetDescription = %d, want 1 (no double-apply)", mc2)
+	}
+}
+
+func TestUpdateAfterDescriptionDoesNotBuffer(t *testing.T) {
+	s := newPostDescState(t, time.Hour)
+	// Description is loaded — Update should apply immediately.
+	r := s.Update("core", "voltage", []byte("120"))
+	if r.Timestamp.IsZero() {
+		t.Error("Timestamp should be set on immediate apply")
+	}
+	vals := s.NodeValues("core")
+	if vals == nil || vals["voltage"] == nil {
+		t.Errorf("core/voltage should be populated immediately after description, got %v", vals)
+	}
 }
