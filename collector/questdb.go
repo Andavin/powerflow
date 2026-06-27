@@ -197,7 +197,19 @@ func (q *QuestDBWriter) CreateTables() error {
 			return fmt.Errorf("DDL failed: %w\n  statement: %s", err, ddl)
 		}
 	}
-	q.logger.Info("QuestDB tables verified", "count", len(tableDDL))
+
+	// Materialise pinned columns with their authoritative types. Idempotent
+	// (ADD COLUMN IF NOT EXISTS) and recreates any column dropped to fix a type
+	// mismatch (e.g. hardware_version/postal_code) with the correct type.
+	colDDL := pinnedColumnDDL()
+	for _, ddl := range colDDL {
+		if err := q.execHTTP(ddl); err != nil {
+			return fmt.Errorf("column DDL failed: %w\n  statement: %s", err, ddl)
+		}
+	}
+
+	q.logger.Info("QuestDB tables verified",
+		"tables", len(tableDDL), "pinned_columns", len(colDDL))
 	return nil
 }
 
@@ -278,6 +290,18 @@ func buildRowLine(table, deviceID string, extraSymbols map[string]string, props 
 	// Fields: everything else
 	for prop, val := range props {
 		col := propToColumn(prop)
+
+		// Symbol strings were already emitted as tags above.
+		if _, ok := val.(string); ok && symbolProps[col] {
+			continue
+		}
+
+		// Pinned columns are encoded as their authoritative type, overriding
+		// whatever the panel's $description currently declares.
+		if writePinnedField(line, table, col, val) {
+			continue
+		}
+
 		switch v := val.(type) {
 		case float64:
 			line.floatF(col, v)
@@ -286,9 +310,7 @@ func buildRowLine(table, deviceID string, extraSymbols map[string]string, props 
 		case bool:
 			line.boolF(col, v)
 		case string:
-			if !symbolProps[col] {
-				line.strF(col, v)
-			}
+			line.strF(col, v)
 		}
 	}
 
