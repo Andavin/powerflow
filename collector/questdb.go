@@ -57,7 +57,7 @@ var tableDDL = []string{
 }
 
 // ---------------------------------------------------------------------------
-// ILP line builder — InfluxDB Line Protocol over raw TCP
+// ILP line builder — InfluxDB Line Protocol (sent to QuestDB over HTTP /write)
 // ---------------------------------------------------------------------------
 
 type ilpLine struct {

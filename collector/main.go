@@ -83,6 +83,11 @@ func main() {
 		}
 	}
 
+	// Warn (non-fatal) if any live column type disagrees with a pin — e.g. a
+	// column that pre-dates the pin and was never migrated would silently
+	// reject this table's rows. Runs after CreateTables so added columns exist.
+	qdbWriter.VerifyPinnedColumns()
+
 	energyTracker := NewEnergyTracker(logger)
 
 	// ---- Update channel -----------------------------------------------
