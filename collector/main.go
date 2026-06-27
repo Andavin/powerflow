@@ -61,7 +61,7 @@ func main() {
 		"device_id", cfg.Span.DeviceID,
 		"subscribe", cfg.Span.SubscribeTopic(),
 		"flush_interval", cfg.QuestDB.WriteInterval,
-		"questdb", fmt.Sprintf("%s:%d", cfg.QuestDB.Host, cfg.QuestDB.ILPPort),
+		"questdb", fmt.Sprintf("http://%s:%d/write", cfg.QuestDB.Host, cfg.QuestDB.HTTPPort),
 		"tls", cfg.MQTT.CACert != "",
 		"log_level", cfg.Logging.Level,
 	)

@@ -112,11 +112,14 @@ span:
 
 # QuestDB time-series database
 questdb:
-  # QuestDB host (ILP and HTTP endpoints must be on the same host)
+  # QuestDB host
   host: "127.0.0.1"
-  # ILP (InfluxDB Line Protocol) port — fast binary ingestion
+  # ILP/TCP port — no longer used for ingestion (moved to ILP-over-HTTP);
+  # retained for backwards compatibility with existing configs.
   ilp_port: 9009
-  # HTTP API port — used for DDL (table creation) only
+  # HTTP API port — used for DDL (table creation) AND ILP ingestion (/write).
+  # ILP-over-HTTP reports per-line errors and isolates a bad row to its own
+  # table instead of dropping the connection and the rest of the batch.
   http_port: 9000
   # Auto-create tables on startup (PARTITION BY DAY, WAL, DEDUP)
   create_tables: true

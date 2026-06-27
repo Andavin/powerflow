@@ -1,12 +1,11 @@
 package main
 
 import (
-	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -165,27 +164,24 @@ func escILPStr(s string) string {
 // ---------------------------------------------------------------------------
 
 type QuestDBWriter struct {
-	conn     net.Conn
-	buf      *bufio.Writer
+	buf      bytes.Buffer
 	cfg      QuestDBConfig
 	deviceID string
+	writeURL string
 	logger   *slog.Logger
 }
 
 var qdbHTTP = &http.Client{Timeout: 30 * time.Second}
 
+// NewQuestDBWriter constructs a writer that ingests over ILP-on-HTTP (the
+// /write endpoint). It does not dial: the HTTP client connects lazily on the
+// first flush, so a brief QuestDB outage at startup is not fatal.
 func NewQuestDBWriter(cfg QuestDBConfig, deviceID string, logger *slog.Logger) (*QuestDBWriter, error) {
-	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.ILPPort)
-	conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
-	if err != nil {
-		return nil, fmt.Errorf("connect ILP at %s: %w", addr, err)
-	}
-
 	return &QuestDBWriter{
-		conn:     conn,
-		buf:      bufio.NewWriterSize(conn, 64*1024),
 		cfg:      cfg,
 		deviceID: deviceID,
+		// precision=n → line-protocol timestamps are nanoseconds (UnixNano).
+		writeURL: fmt.Sprintf("http://%s:%d/write?precision=n", cfg.Host, cfg.HTTPPort),
 		logger:   logger.With("component", "questdb"),
 	}, nil
 }
@@ -258,14 +254,29 @@ func (q *QuestDBWriter) WriteEnergyDeltas(deltas []EnergyDelta) {
 	}
 }
 
-// Flush writes the ILP buffer to QuestDB, reconnecting on failure.
+// Flush POSTs the buffered ILP batch to QuestDB's /write endpoint and clears
+// the buffer. Unlike the raw ILP/TCP stream — where one malformed line aborts
+// the rest of the batch and drops the connection — the HTTP endpoint commits
+// per table: a bad line is rejected (and reported) only for its own table,
+// while every other table in the batch still commits. A transport failure
+// returns an error and the batch is lost; a data error (non-2xx) is logged with
+// QuestDB's message and swallowed so the healthy tables keep flowing.
 func (q *QuestDBWriter) Flush() error {
-	if err := q.buf.Flush(); err != nil {
-		q.logger.Warn("ILP flush failed, reconnecting", "error", err)
-		if rErr := q.reconnect(); rErr != nil {
-			return fmt.Errorf("ILP flush: %w (reconnect: %v)", err, rErr)
-		}
-		return fmt.Errorf("ILP flush: %w (reconnected, batch lost)", err)
+	if q.buf.Len() == 0 {
+		return nil
+	}
+
+	resp, err := qdbHTTP.Post(q.writeURL, "text/plain; charset=utf-8", bytes.NewReader(q.buf.Bytes()))
+	q.buf.Reset()
+	if err != nil {
+		return fmt.Errorf("ILP HTTP write to %s: %w (batch lost)", q.writeURL, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode/100 != 2 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		q.logger.Error("QuestDB rejected ILP rows (isolated to the affected table)",
+			"status", resp.StatusCode, "response", strings.TrimSpace(string(body)))
 	}
 	return nil
 }
@@ -372,29 +383,14 @@ func (q *QuestDBWriter) writeEnergyDelta(d *EnergyDelta, ts time.Time) {
 	}
 }
 
-func (q *QuestDBWriter) reconnect() error {
-	if q.conn != nil {
-		q.conn.Close()
-	}
-	addr := fmt.Sprintf("%s:%d", q.cfg.Host, q.cfg.ILPPort)
-	conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
-	if err != nil {
-		return fmt.Errorf("reconnect ILP at %s: %w", addr, err)
-	}
-	q.conn = conn
-	q.buf.Reset(conn)
-	q.logger.Info("ILP reconnected", "addr", addr)
-	return nil
-}
-
+// Close flushes any buffered batch so it reaches QuestDB before shutdown. A
+// failure here means that final batch is lost, so log it loudly.
 func (q *QuestDBWriter) Close() error {
-	// Flush before closing so any buffered batch reaches QuestDB. A failure
-	// here means data is lost (the connection is about to drop), so log it
-	// loudly rather than silently swallowing the error.
-	if err := q.buf.Flush(); err != nil {
+	if err := q.Flush(); err != nil {
 		q.logger.Error("final ILP flush failed; buffered batch lost", "error", err)
+		return err
 	}
-	return q.conn.Close()
+	return nil
 }
 
 // ---------------------------------------------------------------------------
