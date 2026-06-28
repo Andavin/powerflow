@@ -56,7 +56,7 @@ describe("circuitsLatestSql", () => {
   it("wraps LATEST ON in a subquery and orders by draw", () => {
     const sql = circuitsLatestSql("dev1");
     expect(sql).toContain("LATEST ON ts PARTITION BY circuit_id");
-    expect(sql).toMatch(/SELECT \* FROM \([\s\S]*\) ORDER BY active_power DESC/);
+    expect(sql).toMatch(/SELECT \* FROM \([\s\S]*\) ORDER BY active_power ASC/);
   });
 });
 

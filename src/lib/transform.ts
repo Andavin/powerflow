@@ -64,7 +64,9 @@ export function toBatteryState(row: Row): BatteryState {
 
 export function toCircuit(row: Row): Circuit {
   const relay = (str(row.relay) ?? "").toUpperCase();
-  const watts = Math.round(num0(row.active_power));
+  // Per-circuit active_power is negative when the circuit is consuming, so the
+  // domain `watts` (positive = drawing power) is the negated raw value.
+  const watts = Math.round(-num0(row.active_power));
   return {
     id: str(row.circuit_id) ?? str(row.node_id) ?? "",
     name: str(row.name) ?? "Unknown",

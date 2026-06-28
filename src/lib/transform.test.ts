@@ -74,16 +74,17 @@ describe("toBatteryState", () => {
 });
 
 describe("toCircuit", () => {
-  it("maps relay CLOSED to on", () => {
+  it("maps relay CLOSED to on and negates consumption to positive watts", () => {
+    // A drawing circuit reports negative active_power (EV charger = -3965).
     const c = toCircuit({
       circuit_id: "c1",
-      name: "Fridge",
-      active_power: 123.4,
+      name: "EV Charger",
+      active_power: -3965.5,
       relay: "CLOSED",
     });
     expect(c.isOn).toBe(true);
-    expect(c.watts).toBe(123);
-    expect(c.name).toBe("Fridge");
+    expect(c.watts).toBe(3966);
+    expect(c.name).toBe("EV Charger");
   });
   it("maps relay OPEN to off", () => {
     expect(toCircuit({ relay: "OPEN", active_power: 0 }).isOn).toBe(false);

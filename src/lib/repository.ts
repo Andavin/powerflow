@@ -90,7 +90,7 @@ export class QuestDbRepository implements Repository {
   async getCircuits(): Promise<Circuit[]> {
     const device = await this.device();
     const rows = await this.client.query(circuitsLatestSql(device));
-    return toCircuits(rows);
+    return toCircuits(rows).sort((a, b) => b.watts - a.watts);
   }
 
   async getBattery(): Promise<BatteryState> {

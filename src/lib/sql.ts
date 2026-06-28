@@ -51,7 +51,9 @@ export function circuitsLatestSql(deviceId: string | null): string {
   const inner =
     `SELECT circuit_id, name, active_power, relay, space, breaker_rating, sheddable, always_on ` +
     `FROM circuits ${w} LATEST ON ts PARTITION BY circuit_id`.trim();
-  return `SELECT * FROM (${inner}) ORDER BY active_power DESC`;
+  // active_power is negative for consumption, so ascending puts the biggest
+  // consumers first.
+  return `SELECT * FROM (${inner}) ORDER BY active_power ASC`;
 }
 
 /**
