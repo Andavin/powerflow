@@ -1,15 +1,15 @@
-# Powerflow web app — overlay for the main span-stats compose.
+# Powerflow web app.
 #
-# Run merged with the main file so it shares the `span` network and can reach
-# QuestDB by service name:
+# Runs as its own container, separate from QuestDB. QuestDB publishes port 9000
+# on the host, so this reaches it via host.docker.internal (see extra_hosts) —
+# `localhost` inside a container is the container itself, not the host.
+# Secrets and timezone/device come from ./.env.
 #
-#   docker compose -f compose.yml -f compose.web-app.yml up -d --build
-#
-# (Designed to fold into compose.yml later.) Secrets come from ./.env.
+#   docker compose up -d --build
 
 services:
   powerflow:
-    build: span-web-app
+    build: .
     image: powerflow:latest
     restart: unless-stopped
     ports:
@@ -18,9 +18,12 @@ services:
       - .env
     environment:
       POWERFLOW_DATA_MODE: live
-      # Same hostname the collector uses (see collector/config.yml).
-      QUESTDB_URL: http://localhost:9000
+      # QuestDB is in another container with port 9000 published on the host;
+      # reach it through the host gateway (mapped by extra_hosts below).
+      QUESTDB_URL: http://host.docker.internal:9000
       POWERFLOW_AUTH_DISABLED: "0"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test:
         - CMD-SHELL
@@ -29,8 +32,3 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
-    networks:
-      - span
-
-networks:
-  span:

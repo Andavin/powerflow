@@ -48,6 +48,24 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+/* Energy-flow streaks travel along their conduit via CSS motion paths. */
+@keyframes pf-streak-fwd {
+  from {
+    offset-distance: 0%;
+  }
+  to {
+    offset-distance: 100%;
+  }
+}
+@keyframes pf-streak-rev {
+  from {
+    offset-distance: 100%;
+  }
+  to {
+    offset-distance: 0%;
+  }
+}
+
 /* Hide scrollbars on the phone shell while keeping scroll behaviour. */
 .no-scrollbar::-webkit-scrollbar {
   display: none;

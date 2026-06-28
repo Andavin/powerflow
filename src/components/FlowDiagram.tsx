@@ -17,11 +17,15 @@ interface LegConfig {
 
 const ACTIVE_W = 15;
 
-/** Particle count and duration from power magnitude. */
-function particleParams(magnitude: number): { count: number; dur: number } {
+// A tapered "spindle" centred on the origin, long axis along +X. With
+// rotate="auto" the streak orients along the conduit's direction of travel.
+const SPINDLE = "M-14 0 Q0 4.2 14 0 Q0 -4.2 -14 0 Z";
+
+/** Streak count and travel duration from power magnitude. */
+function streakParams(magnitude: number): { count: number; dur: number } {
   if (magnitude < ACTIVE_W) return { count: 0, dur: 0 };
-  const count = Math.min(5, 2 + Math.round(magnitude / 2200));
-  const dur = Math.max(0.85, 2.7 - magnitude / 3500);
+  const count = magnitude > 2800 ? 2 : 1;
+  const dur = Math.max(1.15, 2.7 - magnitude / 3200);
   return { count, dur };
 }
 
@@ -30,34 +34,40 @@ function Leg({ id, d, color, dim, flow }: LegConfig) {
   const magnitude = Math.abs(flow);
   const active = magnitude >= ACTIVE_W;
   const forward = flow >= 0;
-  const { count, dur } = particleParams(magnitude);
+  const { count, dur } = streakParams(magnitude);
 
   return (
     <g>
       <path
         d={d}
         fill="none"
-        stroke={active ? color : dim}
-        strokeOpacity={active ? 0.45 : 0.5}
+        stroke={dim}
+        strokeOpacity={active ? 0.7 : 0.4}
         strokeWidth={2}
       />
-      {/* Under reduced motion we skip the moving particles entirely and let the
-          brighter active conduit convey that the leg is flowing. */}
+      {/* Reduced motion: no travelling streaks, just the brighter conduit.
+          Motion uses CSS offset-path (reliable + GPU-accelerated); the streak
+          rides the conduit and orients to its tangent via offset-rotate. */}
       {active &&
         !reduce &&
         Array.from({ length: count }).map((_, i) => (
-          <circle key={i} r={3.6} fill={color} filter="url(#pf-glow)">
-            <animateMotion
-              dur={`${dur}s`}
-              repeatCount="indefinite"
-              keyPoints={forward ? "0;1" : "1;0"}
-              keyTimes="0;1"
-              calcMode="linear"
-              begin={`-${((i / count) * dur).toFixed(3)}s`}
-            >
-              <mpath href={`#${id}`} />
-            </animateMotion>
-          </circle>
+          <path
+            key={i}
+            className="pf-streak"
+            d={SPINDLE}
+            fill={`url(#${id}-grad)`}
+            filter="url(#pf-glow)"
+            style={{
+              offsetPath: `path('${d}')`,
+              offsetRotate: "auto",
+              offsetAnchor: "center",
+              animationName: forward ? "pf-streak-fwd" : "pf-streak-rev",
+              animationDuration: `${dur}s`,
+              animationTimingFunction: "linear",
+              animationIterationCount: "infinite",
+              animationDelay: `${(-(i / count) * dur).toFixed(2)}s`,
+            }}
+          />
         ))}
     </g>
   );
@@ -99,11 +109,19 @@ function SourceLabel({
 }
 
 export function FlowDiagram({ flow }: { flow: FlowSnapshot }) {
+  // The home leg is tinted by whichever source is supplying the most power.
+  const supply = [
+    { c: SOURCE_COLOR.solar, w: flow.solarW },
+    { c: SOURCE_COLOR.grid, w: Math.max(0, flow.gridW) },
+    { c: SOURCE_COLOR.battery, w: Math.max(0, flow.batteryW) },
+  ].sort((a, b) => b.w - a.w);
+  const homeColor = supply[0].w > 0 ? supply[0].c : SOURCE_COLOR.home;
+
   const legs: LegConfig[] = [
     { id: "pf-solar", d: "M56,96 C56,150 140,150 140,188", color: SOURCE_COLOR.solar, dim: SOURCE_DIM.solar, flow: flow.solarW },
     { id: "pf-grid", d: "M160,96 L160,188", color: SOURCE_COLOR.grid, dim: SOURCE_DIM.grid, flow: flow.gridW },
     { id: "pf-battery", d: "M264,96 C264,150 180,150 180,188", color: SOURCE_COLOR.battery, dim: SOURCE_DIM.battery, flow: flow.batteryW },
-    { id: "pf-home", d: "M160,320 L160,404", color: SOURCE_COLOR.home, dim: SOURCE_DIM.home, flow: flow.homeW },
+    { id: "pf-home", d: "M160,320 L160,404", color: homeColor, dim: SOURCE_DIM.home, flow: flow.homeW },
   ];
 
   const home = splitPower(flow.homeW);
@@ -116,8 +134,17 @@ export function FlowDiagram({ flow }: { flow: FlowSnapshot }) {
       aria-label={`Energy flow: home ${flow.homeW} watts, solar ${flow.solarW}, grid ${flow.gridW}, battery ${flow.batteryW}`}
     >
       <defs>
+        {/* Bright-core → colour → transparent fill so each streak glows in the
+            middle and fades to its tapered ends. */}
+        {legs.map((leg) => (
+          <radialGradient key={leg.id} id={`${leg.id}-grad`} cx="0.5" cy="0.5" r="0.5">
+            <stop offset="0%" stopColor="#ffffff" stopOpacity="1" />
+            <stop offset="35%" stopColor={leg.color} stopOpacity="1" />
+            <stop offset="100%" stopColor={leg.color} stopOpacity="0" />
+          </radialGradient>
+        ))}
         <filter id="pf-glow" x="-60%" y="-60%" width="220%" height="220%">
-          <feGaussianBlur stdDeviation="2.2" result="b" />
+          <feGaussianBlur stdDeviation="2.7" result="b" />
           <feMerge>
             <feMergeNode in="b" />
             <feMergeNode in="SourceGraphic" />
