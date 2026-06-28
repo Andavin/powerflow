@@ -1,5 +1,5 @@
-import { FlowScreen } from "@/components/screens/FlowScreen";
+import { ResponsiveHome } from "@/components/screens/ResponsiveHome";
 
 export default function HomePage() {
-  return <FlowScreen />;
+  return <ResponsiveHome />;
 }

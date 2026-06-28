@@ -41,28 +41,23 @@ function Leg({ id, d, color, dim, flow }: LegConfig) {
         strokeOpacity={active ? 0.45 : 0.5}
         strokeWidth={2}
       />
+      {/* Under reduced motion we skip the moving particles entirely and let the
+          brighter active conduit convey that the leg is flowing. */}
       {active &&
-        (reduce ? (
-          <circle r={3.6} fill={color} filter="url(#pf-glow)">
-            <animateMotion dur="0.001s" fill="freeze" keyPoints="0.5;0.5" keyTimes="0;1">
+        !reduce &&
+        Array.from({ length: count }).map((_, i) => (
+          <circle key={i} r={3.6} fill={color} filter="url(#pf-glow)">
+            <animateMotion
+              dur={`${dur}s`}
+              repeatCount="indefinite"
+              keyPoints={forward ? "0;1" : "1;0"}
+              keyTimes="0;1"
+              calcMode="linear"
+              begin={`-${((i / count) * dur).toFixed(3)}s`}
+            >
               <mpath href={`#${id}`} />
             </animateMotion>
           </circle>
-        ) : (
-          Array.from({ length: count }).map((_, i) => (
-            <circle key={i} r={3.6} fill={color} filter="url(#pf-glow)">
-              <animateMotion
-                dur={`${dur}s`}
-                repeatCount="indefinite"
-                keyPoints={forward ? "0;1" : "1;0"}
-                keyTimes="0;1"
-                calcMode="linear"
-                begin={`-${((i / count) * dur).toFixed(3)}s`}
-              >
-                <mpath href={`#${id}`} />
-              </animateMotion>
-            </circle>
-          ))
         ))}
     </g>
   );
