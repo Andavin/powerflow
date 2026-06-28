@@ -4,7 +4,7 @@ import { config as appConfig } from "@/lib/config";
 import { SESSION_COOKIE, verifySessionToken } from "@/lib/auth";
 
 /** Paths reachable without a session. */
-const PUBLIC_PATHS = new Set(["/login", "/api/login"]);
+const PUBLIC_PATHS = new Set(["/login", "/api/login", "/api/health"]);
 
 export async function proxy(request: NextRequest): Promise<NextResponse> {
   const cfg = appConfig();

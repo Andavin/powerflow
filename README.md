@@ -1,36 +1,100 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Powerflow
 
-## Getting Started
+A fast, real-time energy dashboard for a home power panel, backed by the live
+QuestDB feed that `span-stats` ingests. It mirrors the panel app's phone
+experience (live flow animation, circuits, stats) and adds a richer desktop
+dashboard plus a history workbench with custom timeframes and
+period-over-period comparisons.
 
-First, run the development server:
+Built to fix two specific pain points: the stock app's sluggishness, and its
+shallow historical views.
+
+## Features
+
+- **Live flow** — animated solar / grid / battery → panel → home diagram driven
+  by a Server-Sent Events stream (with a polling fallback).
+- **Circuits** — every circuit's live draw, with search and sorting.
+- **Stats** — Home / Solar / Battery / Grid over Today / Week / Month / Year:
+  generation, consumption, battery charge/discharge with a state-of-charge
+  overlay, grid import/export, and a per-circuit breakdown.
+- **Desktop dashboard** — multi-panel overview with per-source sparklines.
+- **History workbench** — arbitrary date ranges, quick presets, and
+  compare-to-previous-period with a percent-change delta.
+- **Login** — signed-cookie sessions (the app is meant to be internet-exposed).
+
+## Tech
+
+Next.js 16 (App Router, Turbopack) · React 19 · TypeScript · Tailwind v4 ·
+Recharts · Framer Motion · Vitest · Playwright. No database driver — QuestDB is
+queried over its HTTP `/exec` API.
+
+## Data model
+
+QuestDB stores raw signed values; the app normalises them (see
+`src/lib/transform.ts`) so that **home = solar + grid + battery**:
+
+| Domain        | Source                  | Sign convention                         |
+| ------------- | ----------------------- | --------------------------------------- |
+| `solarW`      | `power_flows.pv`        | production = `-pv` (≥ 0)                |
+| `gridW`       | `power_flows.grid`      | `+` import / `-` export (`-grid`)       |
+| `batteryW`    | `power_flows.battery`   | `+` discharge / `-` charge (`-battery`) |
+| `homeW`       | `power_flows.site`      | load (≥ 0)                              |
+| circuit watts | `circuits.active_power` | consumption = `-active_power`           |
+
+Energy (kWh) is the time-integral of average power per timezone-aligned bucket
+(`SAMPLE BY … ALIGN TO CALENDAR TIME ZONE`), with the in-progress bucket clipped
+to now. All day boundaries use the panel timezone (`America/Denver`).
+
+## Configuration
+
+Copy `.env.example` to `.env.local` and set values:
+
+| Variable                   | Purpose                                             |
+| -------------------------- | --------------------------------------------------- |
+| `POWERFLOW_DATA_MODE`      | `live` (QuestDB) or `mock` (deterministic fixtures) |
+| `QUESTDB_URL`              | QuestDB HTTP endpoint                               |
+| `POWERFLOW_TIMEZONE`       | Panel timezone (default `America/Denver`)           |
+| `POWERFLOW_DEVICE_ID`      | Scope queries to a device (blank = most recent)     |
+| `POWERFLOW_PASSWORD`       | Login password                                      |
+| `POWERFLOW_SESSION_SECRET` | Long random string signing sessions                 |
+| `POWERFLOW_AUTH_DISABLED`  | `1` to bypass auth (tests / trusted LAN only)       |
+
+## Develop
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run dev            # http://localhost:3000
+
+npm test               # Vitest unit tests (no database needed)
+npm run test:e2e       # Playwright (boots the app in mock mode)
+npm run typecheck
+npm run lint
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Tests never touch the database: unit tests exercise pure logic and a fake
+client; Playwright runs the app in `mock` mode.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Deploy (Docker)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+The image is a standalone Next.js server. Join the existing span compose network
+so `questdb` resolves:
 
-## Learn More
+```bash
+export POWERFLOW_PASSWORD='a-strong-password'
+export POWERFLOW_SESSION_SECRET="$(openssl rand -hex 32)"
+export SPAN_NETWORK=data_span      # the network span-stats' compose created
 
-To learn more about Next.js, take a look at the following resources:
+docker compose up -d --build
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Put it behind your existing TLS-terminating reverse proxy.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Layout
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+src/lib/          config, types, time, sql, transform, questdb client, repository, auth
+src/app/api/      flow, circuits, stats, circuit-energy, stream (SSE), login, logout
+src/app/(main)/   authenticated pages (flow/dashboard, circuits, stats, history)
+src/components/   FlowDiagram, charts, screens, AppShell, primitives
+e2e/              Playwright specs (mobile + desktop projects)
+```

@@ -10,7 +10,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Card, Segmented, Spinner, StatNumber, ErrorNote } from "@/components/primitives";
+import { Card, Spinner, StatNumber, ErrorNote } from "@/components/primitives";
 import { SOURCE_ICON } from "@/components/icons";
 import { useStats } from "@/lib/client/data";
 import { addDaysStr, dayCount, dayRangeWindow, todayStr } from "@/lib/client/tz";
