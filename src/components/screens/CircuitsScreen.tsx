@@ -1,0 +1,95 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import { Segmented, Spinner, StatNumber, ErrorNote } from "@/components/primitives";
+import { useCircuits } from "@/lib/client/data";
+import { splitPower } from "@/lib/format";
+import type { Circuit } from "@/lib/types";
+
+type SortMode = "activity" | "panel" | "name";
+
+const SORTS = [
+  { value: "activity" as const, label: "By Activity" },
+  { value: "panel" as const, label: "In Panel" },
+  { value: "name" as const, label: "A–Z" },
+];
+
+function sortCircuits(circuits: Circuit[], mode: SortMode): Circuit[] {
+  const copy = [...circuits];
+  switch (mode) {
+    case "activity":
+      return copy.sort((a, b) => b.watts - a.watts);
+    case "panel":
+      return copy.sort((a, b) => (a.space ?? 99) - (b.space ?? 99));
+    case "name":
+      return copy.sort((a, b) => a.name.localeCompare(b.name));
+  }
+}
+
+export function CircuitsScreen() {
+  const { data, error, isLoading } = useCircuits();
+  const [sort, setSort] = useState<SortMode>("activity");
+  const [search, setSearch] = useState("");
+
+  const circuits = useMemo(() => {
+    const list = data?.circuits ?? [];
+    const filtered = search
+      ? list.filter((c) => c.name.toLowerCase().includes(search.toLowerCase()))
+      : list;
+    return sortCircuits(filtered, sort);
+  }, [data, sort, search]);
+
+  return (
+    <div className="mx-auto flex w-full max-w-2xl flex-col gap-4">
+      <h1 className="text-3xl font-bold tracking-tight">Circuits</h1>
+
+      <Segmented options={SORTS} value={sort} onChange={setSort} size="sm" ariaLabel="Sort circuits" />
+
+      <input
+        type="search"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="Search for circuits"
+        aria-label="Search circuits"
+        className="w-full rounded-2xl border border-border bg-surface px-4 py-3 text-fg outline-none placeholder:text-faint focus:border-battery"
+      />
+
+      {error && <ErrorNote message={String(error.message ?? error)} />}
+      {isLoading && !data && (
+        <div className="flex justify-center py-10">
+          <Spinner />
+        </div>
+      )}
+
+      <ul className="flex flex-col gap-2" aria-label="Circuit list">
+        {circuits.map((c) => {
+          const p = splitPower(c.watts);
+          return (
+            <li
+              key={c.id}
+              className="flex items-center gap-3 rounded-2xl border border-border bg-surface px-4 py-4"
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium">{c.name}</span>
+                {c.alwaysOn && <span className="text-xs text-faint">Always on</span>}
+              </span>
+              <span
+                className={`rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                  c.isOn ? "bg-positive/15 text-positive" : "bg-surface-3 text-faint"
+                }`}
+              >
+                {c.isOn ? "On" : "Off"}
+              </span>
+              <span className="w-20 text-right">
+                <StatNumber value={p.value} unit={p.unit} />
+              </span>
+            </li>
+          );
+        })}
+        {!isLoading && circuits.length === 0 && (
+          <li className="py-10 text-center text-sm text-faint">No circuits match.</li>
+        )}
+      </ul>
+    </div>
+  );
+}

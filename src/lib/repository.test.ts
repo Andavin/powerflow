@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { QuestDbRepository } from "./repository";
 import { MockRepository } from "./mock";
 import type { QuestDbClient } from "./questdb";
