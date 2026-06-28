@@ -9,6 +9,26 @@ import { jsonError } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Whether to mark the session cookie `Secure`.
+ *
+ * A `Secure` cookie is silently dropped by the browser over plain HTTP, which
+ * would make login appear to "do nothing". So we only set it when the request
+ * actually arrived over HTTPS — detected via the proxy's `x-forwarded-proto`
+ * (the common reverse-proxy setup) or the request URL. Set
+ * `POWERFLOW_FORCE_INSECURE_COOKIE=1` to never mark it secure.
+ */
+function cookieSecure(request: Request): boolean {
+  if (process.env.POWERFLOW_FORCE_INSECURE_COOKIE === "1") return false;
+  const forwarded = request.headers.get("x-forwarded-proto");
+  if (forwarded) return forwarded.split(",")[0].trim() === "https";
+  try {
+    return new URL(request.url).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 export async function POST(request: Request) {
   const cfg = config();
   if (cfg.authDisabled) return Response.json({ ok: true });
@@ -32,7 +52,7 @@ export async function POST(request: Request) {
   const store = await cookies();
   store.set(SESSION_COOKIE, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: cookieSecure(request),
     sameSite: "lax",
     path: "/",
     maxAge: 30 * 24 * 60 * 60,
