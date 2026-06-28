@@ -1,6 +1,6 @@
 "use client";
 
-import { useReducedMotion } from "framer-motion";
+import { useEffect, useRef } from "react";
 import type { FlowSnapshot } from "@/lib/types";
 import { SOURCE_COLOR, SOURCE_DIM } from "@/lib/palette";
 import { SolarIcon, GridIcon, BatteryIcon, HomeIcon } from "./icons";
@@ -17,11 +17,11 @@ interface LegConfig {
 
 const ACTIVE_W = 15;
 
-// A tapered "spindle" centred on the origin, long axis along +X. With
-// rotate="auto" the streak orients along the conduit's direction of travel.
+// A tapered "spindle" centred on the origin, long axis along +X; rotated to the
+// conduit tangent at render time so it streaks along the direction of travel.
 const SPINDLE = "M-14 0 Q0 4.2 14 0 Q0 -4.2 -14 0 Z";
 
-/** Streak count and travel duration from power magnitude. */
+/** Streak count and travel duration (seconds) from power magnitude. */
 function streakParams(magnitude: number): { count: number; dur: number } {
   if (magnitude < ACTIVE_W) return { count: 0, dur: 0 };
   const count = magnitude > 2800 ? 2 : 1;
@@ -29,48 +29,13 @@ function streakParams(magnitude: number): { count: number; dur: number } {
   return { count, dur };
 }
 
-function Leg({ id, d, color, dim, flow }: LegConfig) {
-  const reduce = useReducedMotion();
-  const magnitude = Math.abs(flow);
-  const active = magnitude >= ACTIVE_W;
-  const forward = flow >= 0;
-  const { count, dur } = streakParams(magnitude);
-
-  return (
-    <g>
-      <path
-        d={d}
-        fill="none"
-        stroke={dim}
-        strokeOpacity={active ? 0.7 : 0.4}
-        strokeWidth={2}
-      />
-      {/* Reduced motion: no travelling streaks, just the brighter conduit.
-          Motion uses CSS offset-path (reliable + GPU-accelerated); the streak
-          rides the conduit and orients to its tangent via offset-rotate. */}
-      {active &&
-        !reduce &&
-        Array.from({ length: count }).map((_, i) => (
-          <path
-            key={i}
-            className="pf-streak"
-            d={SPINDLE}
-            fill={`url(#${id}-grad)`}
-            filter="url(#pf-glow)"
-            style={{
-              offsetPath: `path('${d}')`,
-              offsetRotate: "auto",
-              offsetAnchor: "center",
-              animationName: forward ? "pf-streak-fwd" : "pf-streak-rev",
-              animationDuration: `${dur}s`,
-              animationTimingFunction: "linear",
-              animationIterationCount: "infinite",
-              animationDelay: `${(-(i / count) * dur).toFixed(2)}s`,
-            }}
-          />
-        ))}
-    </g>
-  );
+interface StreakDef {
+  key: string;
+  legId: string;
+  gradId: string;
+  dur: number;
+  forward: boolean;
+  phase: number;
 }
 
 function SourceLabel({
@@ -124,6 +89,77 @@ export function FlowDiagram({ flow }: { flow: FlowSnapshot }) {
     { id: "pf-home", d: "M160,320 L160,404", color: homeColor, dim: SOURCE_DIM.home, flow: flow.homeW },
   ];
 
+  const streaks: StreakDef[] = [];
+  for (const leg of legs) {
+    const mag = Math.abs(leg.flow);
+    if (mag < ACTIVE_W) continue;
+    const { count, dur } = streakParams(mag);
+    for (let i = 0; i < count; i++) {
+      streaks.push({
+        key: `${leg.id}-${i}`,
+        legId: leg.id,
+        gradId: `${leg.id}-grad`,
+        dur,
+        forward: leg.flow >= 0,
+        phase: i / count,
+      });
+    }
+  }
+
+  // Refs to the conduit paths (for geometry) and the streak shapes (to move).
+  const conduitRefs = useRef<Record<string, SVGPathElement | null>>({});
+  const streakRefs = useRef<Record<string, SVGPathElement | null>>({});
+  // Latest streak config, read live by the animation loop so power changes
+  // (which tweak `dur`) don't restart the animation.
+  const streaksRef = useRef<StreakDef[]>(streaks);
+  streaksRef.current = streaks;
+
+  // Re-run the loop only when the *set* of streaks changes (a leg switching on
+  // or off), not on every power tick.
+  const streakKeys = streaks.map((s) => s.key).join("|");
+
+  useEffect(() => {
+    let raf = 0;
+    const start = performance.now();
+    const lengths: Record<string, number> = {};
+    for (const id of Object.keys(conduitRefs.current)) {
+      const el = conduitRefs.current[id];
+      if (el) {
+        try {
+          lengths[id] = el.getTotalLength();
+        } catch {
+          /* not measurable yet */
+        }
+      }
+    }
+
+    const tick = (now: number) => {
+      const t = (now - start) / 1000;
+      for (const s of streaksRef.current) {
+        const streakEl = streakRefs.current[s.key];
+        const pathEl = conduitRefs.current[s.legId];
+        const len = lengths[s.legId];
+        if (!streakEl || !pathEl || !len) continue;
+        let prog = ((t / s.dur) + s.phase) % 1;
+        if (prog < 0) prog += 1;
+        if (!s.forward) prog = 1 - prog;
+        const dist = prog * len;
+        const pt = pathEl.getPointAtLength(dist);
+        const ahead = pathEl.getPointAtLength(Math.min(len, dist + 1.5));
+        const ang = (Math.atan2(ahead.y - pt.y, ahead.x - pt.x) * 180) / Math.PI;
+        streakEl.setAttribute(
+          "transform",
+          `translate(${pt.x.toFixed(2)} ${pt.y.toFixed(2)}) rotate(${ang.toFixed(1)})`,
+        );
+        streakEl.style.opacity = "1";
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [streakKeys]);
+
   const home = splitPower(flow.homeW);
 
   return (
@@ -156,8 +192,37 @@ export function FlowDiagram({ flow }: { flow: FlowSnapshot }) {
         </linearGradient>
       </defs>
 
-      {legs.map((leg) => (
-        <Leg key={leg.id} {...leg} />
+      {/* Conduit guide lines */}
+      {legs.map((leg) => {
+        const active = Math.abs(leg.flow) >= ACTIVE_W;
+        return (
+          <path
+            key={leg.id}
+            ref={(el) => {
+              conduitRefs.current[leg.id] = el;
+            }}
+            d={leg.d}
+            fill="none"
+            stroke={leg.dim}
+            strokeOpacity={active ? 0.7 : 0.4}
+            strokeWidth={2}
+          />
+        );
+      })}
+
+      {/* Travelling streaks (positioned by the rAF loop) */}
+      {streaks.map((s) => (
+        <path
+          key={s.key}
+          ref={(el) => {
+            streakRefs.current[s.key] = el;
+          }}
+          className="pf-streak"
+          d={SPINDLE}
+          fill={`url(#${s.gradId})`}
+          filter="url(#pf-glow)"
+          style={{ opacity: 0 }}
+        />
       ))}
 
       {/* Panel body */}
