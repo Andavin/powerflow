@@ -1,0 +1,68 @@
+@import "tailwindcss";
+
+/*
+ * Powerflow design tokens.
+ * Source-color convention mirrors the energy domain:
+ *   solar = gold, battery = teal, grid = indigo, home/load = blue.
+ */
+@theme {
+  --color-bg: #050608;
+  --color-surface: #111317;
+  --color-surface-2: #1a1d23;
+  --color-surface-3: #23272f;
+  --color-border: #2a2e37;
+  --color-fg: #f4f6fa;
+  --color-muted: #8b929e;
+  --color-faint: #5b616c;
+
+  --color-solar: #ffce3a;
+  --color-solar-dim: #6b5a1c;
+  --color-battery: #2ee6d6;
+  --color-battery-dim: #1b5d57;
+  --color-grid: #6c7bff;
+  --color-grid-dim: #2f3570;
+  --color-home: #3b9bff;
+  --color-home-dim: #1d4a78;
+  --color-positive: #2ee6d6;
+  --color-negative: #ff6b6b;
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: var(--font-jbmono), ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Hide scrollbars on the phone shell while keeping scroll behaviour. */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
