@@ -104,8 +104,9 @@ export function circuitEnergySql(
 ): string {
   const w = where([deviceEq(deviceId), timeRange(window), "node_type = 'circuit'"]);
   return (
+    // A circuit's consumption energy is in exported_wh (delivered to the load).
     `SELECT node_id, name, sum(imported_wh) imported_wh, sum(exported_wh) exported_wh ` +
-    `FROM power_usage ${w} GROUP BY node_id, name ORDER BY imported_wh DESC`
+    `FROM power_usage ${w} GROUP BY node_id, name ORDER BY exported_wh DESC`
   );
 }
 

@@ -218,7 +218,10 @@ export function circuitEnergyFromRows(
     .map((r) => ({
       id: str(r.node_id) ?? "",
       name: str(r.name) ?? "Unknown",
-      kWh: round3(num0(r.imported_wh) / 1000),
+      // A circuit's consumption energy is recorded in exported_wh (energy the
+      // panel delivered out to the circuit); imported_wh is backfeed (~0 for
+      // loads) — mirrors active_power being negative for a drawing circuit.
+      kWh: round3(num0(r.exported_wh) / 1000),
       mix,
     }))
     .filter((c) => c.kWh > 0)

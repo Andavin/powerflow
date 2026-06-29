@@ -179,8 +179,8 @@ describe("homeSourceMix + circuitEnergyFromRows", () => {
     const mix = { solar: 0.3, battery: 0.5, grid: 0.2 };
     const out = circuitEnergyFromRows(
       [
-        { node_id: "a", name: "EV", imported_wh: 42000 },
-        { node_id: "b", name: "Idle", imported_wh: 0 },
+        { node_id: "a", name: "EV", exported_wh: 42000, imported_wh: 3 },
+        { node_id: "b", name: "Idle", exported_wh: 0 },
       ],
       mix,
     );
