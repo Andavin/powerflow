@@ -28,10 +28,12 @@ export interface LiveState {
   bess: Record<string, unknown>;
   /** circuitId → consumption watts (positive = drawing power). */
   circuitWatts: Map<string, number>;
+  /** circuitId → relay state (e.g. CLOSED/OPEN), upper-cased. */
+  circuitRelay: Map<string, string>;
 }
 
 export function emptyLiveState(): LiveState {
-  return { flow: {}, bess: {}, circuitWatts: new Map() };
+  return { flow: {}, bess: {}, circuitWatts: new Map(), circuitRelay: new Map() };
 }
 
 /** True once all four flow channels have been seen (avoids a partial frame). */
@@ -81,22 +83,32 @@ export function applyMessage(
     return true;
   }
 
-  // Any non-system node carrying active_power is a circuit. active_power is
-  // negative for consumption, so negate to positive "drawing" watts.
-  if (property === "active_power" && !SYSTEM_NODES.has(node)) {
-    const v = num(payload);
-    if (v === null) return false;
-    state.circuitWatts.set(node, Math.round(-v));
-    return true;
+  // Non-system nodes are circuits.
+  if (!SYSTEM_NODES.has(node)) {
+    if (property === "active_power") {
+      const v = num(payload);
+      if (v === null) return false;
+      // active_power is negative for consumption; negate to positive draw.
+      state.circuitWatts.set(node, Math.round(-v));
+      return true;
+    }
+    if (property === "relay") {
+      state.circuitRelay.set(node, payload.toUpperCase());
+      return true;
+    }
   }
 
   return false;
 }
 
-/** Build a client-facing snapshot from current state + cached circuit names. */
+/**
+ * Build a client-facing snapshot from current state + circuit metadata
+ * (id → Circuit, looked up from QuestDB). Live MQTT values (watts, relay)
+ * override the metadata; metadata supplies names, panel slot, breaker, flags.
+ */
 export function buildSnapshot(
   state: LiveState,
-  names: Map<string, string>,
+  meta: Map<string, Circuit>,
   nowMs: number = Date.now(),
 ): LiveSnapshot {
   const ts = new Date(nowMs).toISOString();
@@ -115,17 +127,24 @@ export function buildSnapshot(
     },
   );
 
-  const circuits: Circuit[] = [...state.circuitWatts.entries()].map(([id, watts]) => ({
-    id,
-    name: names.get(id) ?? id,
-    watts,
-    relayState: "CLOSED",
-    isOn: true,
-    space: null,
-    breakerRating: null,
-    sheddable: false,
-    alwaysOn: false,
-  }));
+  const ids = new Set<string>([...state.circuitWatts.keys(), ...meta.keys()]);
+  const circuits: Circuit[] = [...ids]
+    .map((id) => {
+      const m = meta.get(id);
+      const relayState = (state.circuitRelay.get(id) ?? m?.relayState ?? "CLOSED").toUpperCase();
+      return {
+        id,
+        name: m?.name ?? id,
+        watts: state.circuitWatts.get(id) ?? m?.watts ?? 0,
+        relayState,
+        isOn: relayState !== "OPEN",
+        space: m?.space ?? null,
+        breakerRating: m?.breakerRating ?? null,
+        sheddable: m?.sheddable ?? false,
+        alwaysOn: m?.alwaysOn ?? false,
+      };
+    })
+    .sort((a, b) => b.watts - a.watts);
 
-  return { ts, flow, top: topConsumers(circuits, 5) };
+  return { ts, flow, top: topConsumers(circuits, 5), circuits };
 }

@@ -55,9 +55,15 @@ describe("applyMessage — circuits", () => {
     expect(s.circuitWatts.size).toBe(0);
   });
 
-  it("ignores non-active_power circuit properties", () => {
+  it("captures circuit relay state", () => {
     const s = emptyLiveState();
-    expect(apply(s, "ebus/5/nj-2338-00fq1/abc123/relay", "CLOSED")).toBe(false);
+    expect(apply(s, "ebus/5/nj-2338-00fq1/abc123/relay", "open")).toBe(true);
+    expect(s.circuitRelay.get("abc123")).toBe("OPEN");
+  });
+
+  it("ignores unrelated circuit properties", () => {
+    const s = emptyLiveState();
+    expect(apply(s, "ebus/5/nj-2338-00fq1/abc123/breaker_rating", "20")).toBe(false);
   });
 });
 
@@ -71,7 +77,20 @@ describe("applyMessage — rejects", () => {
 });
 
 describe("buildSnapshot", () => {
-  it("normalises flow signs and ranks top consumers by draw", () => {
+  const circuitMeta = (over: Partial<import("../types").Circuit>): import("../types").Circuit => ({
+    id: "?",
+    name: "?",
+    watts: 0,
+    relayState: "CLOSED",
+    isOn: true,
+    space: null,
+    breakerRating: null,
+    sheddable: false,
+    alwaysOn: false,
+    ...over,
+  });
+
+  it("normalises flow signs, ranks top consumers, and lists circuits", () => {
     const s = emptyLiveState();
     apply(s, "ebus/5/nj-2338-00fq1/power-flows/site", "5274");
     apply(s, "ebus/5/nj-2338-00fq1/power-flows/grid", "-7");
@@ -80,12 +99,13 @@ describe("buildSnapshot", () => {
     apply(s, "ebus/5/nj-2338-00fq1/bess/soc", "56");
     apply(s, "ebus/5/nj-2338-00fq1/ev/active_power", "-3965");
     apply(s, "ebus/5/nj-2338-00fq1/fridge/active_power", "-120");
+    apply(s, "ebus/5/nj-2338-00fq1/fridge/relay", "OPEN");
 
-    const names = new Map([
-      ["ev", "EV Charger"],
-      ["fridge", "Fridge"],
+    const meta = new Map([
+      ["ev", circuitMeta({ id: "ev", name: "EV Charger", space: 1 })],
+      ["fridge", circuitMeta({ id: "fridge", name: "Fridge", alwaysOn: true })],
     ]);
-    const snap = buildSnapshot(s, names, Date.parse("2026-06-28T02:10:00Z"));
+    const snap = buildSnapshot(s, meta, Date.parse("2026-06-28T02:10:00Z"));
 
     expect(snap.flow.homeW).toBe(5274);
     expect(snap.flow.solarW).toBe(2192);
@@ -93,12 +113,18 @@ describe("buildSnapshot", () => {
     expect(snap.flow.batterySoc).toBe(56);
     expect(snap.top[0]).toMatchObject({ id: "ev", name: "EV Charger", watts: 3965 });
     expect(snap.top[0].share).toBeCloseTo(3965 / (3965 + 120), 5);
+
+    // Full circuit list with live watts + relay merged onto metadata.
+    expect(snap.circuits).toHaveLength(2);
+    const fridge = snap.circuits.find((c) => c.id === "fridge")!;
+    expect(fridge).toMatchObject({ name: "Fridge", watts: 120, isOn: false, alwaysOn: true });
   });
 
-  it("falls back to the circuit id when no name is known", () => {
+  it("falls back to the circuit id when no metadata is known", () => {
     const s = emptyLiveState();
     apply(s, "ebus/5/nj-2338-00fq1/xyz/active_power", "-500");
     const snap = buildSnapshot(s, new Map());
     expect(snap.top[0].name).toBe("xyz");
+    expect(snap.circuits[0].id).toBe("xyz");
   });
 });

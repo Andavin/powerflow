@@ -12,8 +12,16 @@ export const dynamic = "force-dynamic";
  * `top` event per coalesced snapshot.
  */
 export async function GET(request: NextRequest) {
-  const live = getLiveSource();
-  live.ensureStarted();
+  let live;
+  try {
+    live = getLiveSource();
+    live.ensureStarted();
+  } catch (err) {
+    return Response.json(
+      { error: err instanceof Error ? err.message : "live source unavailable" },
+      { status: 503 },
+    );
+  }
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream<Uint8Array>({
@@ -28,6 +36,7 @@ export async function GET(request: NextRequest) {
       const send = (snap: LiveSnapshot) => {
         write("flow", snap.flow);
         write("top", snap.top);
+        write("circuits", snap.circuits);
       };
 
       // Prime with the latest snapshot, then stream updates.

@@ -5,10 +5,10 @@ import { Sparkline } from "@/components/charts/Sparkline";
 import { StatsChart } from "@/components/charts/StatsChart";
 import { Card, Spinner, StatNumber } from "@/components/primitives";
 import { SOURCE_ICON } from "@/components/icons";
-import { useCircuits, useFlowStream, useStats } from "@/lib/client/data";
+import { useLiveStream, useStats } from "@/lib/client/data";
 import { SOURCE_COLOR, SOURCE_LABEL } from "@/lib/palette";
 import { splitEnergy, splitPower, formatPercent } from "@/lib/format";
-import type { EnergySeries, StatSource } from "@/lib/types";
+import type { EnergySeries, StatSource, TopConsumer } from "@/lib/types";
 
 function summaryValue(series: EnergySeries): { value: string; unit: string; sub: string } {
   if (series.source === "battery") {
@@ -60,9 +60,7 @@ function SourceStatCard({ source }: { source: StatSource }) {
   );
 }
 
-function TopConsumers() {
-  const { data } = useCircuits();
-  const top = data?.top ?? [];
+function TopConsumers({ top }: { top: TopConsumer[] }) {
   return (
     <Card className="p-4">
       <h2 className="mb-3 text-sm font-semibold text-muted">Using the most power now</h2>
@@ -86,7 +84,7 @@ function TopConsumers() {
 }
 
 export function DesktopDashboard() {
-  const { flow, connected } = useFlowStream();
+  const { flow, top, connected } = useLiveStream();
   const homeToday = useStats("home", "today");
 
   return (
@@ -110,7 +108,7 @@ export function DesktopDashboard() {
           <SourceStatCard source="battery" />
           <SourceStatCard source="grid" />
           <div className="col-span-2">
-            <TopConsumers />
+            <TopConsumers top={top} />
           </div>
         </div>
       </div>

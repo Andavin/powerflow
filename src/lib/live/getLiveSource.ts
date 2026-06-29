@@ -1,22 +1,33 @@
 import { config } from "../config";
 import { getRepository } from "../getRepository";
 import type { LiveSource } from "./types";
-import { PollingLiveSource } from "./pollingSource";
+import { MockLiveSource } from "./mockSource";
 import { MqttLiveSource } from "./mqttSource";
 
 let cached: LiveSource | null = null;
 
 /**
- * Process-wide live source. MQTT when configured (event-driven, no DB polling),
- * otherwise a QuestDB/mock polling fallback. Started lazily on first use and
- * shared across all SSE connections.
+ * Process-wide live source, shared across all SSE connections.
+ *   - `mock` data mode → deterministic in-memory source (tests / demos).
+ *   - `live` data mode → MQTT (event-driven). The real-time path never polls
+ *     QuestDB; only circuit metadata (names, panel slot) is read from it,
+ *     rarely.
+ *
+ * Live mode requires MQTT to be configured (POWERFLOW_MQTT_URL + device id).
  */
 export function getLiveSource(): LiveSource {
   if (cached) return cached;
   const cfg = config();
   const repo = getRepository();
 
-  if (cfg.realtime === "mqtt" && cfg.mqtt.url && cfg.deviceId) {
+  if (cfg.dataMode === "mock") {
+    cached = new MockLiveSource(repo);
+  } else {
+    if (!cfg.mqtt.url || !cfg.deviceId) {
+      throw new Error(
+        "Live real-time requires MQTT: set POWERFLOW_MQTT_URL and POWERFLOW_DEVICE_ID.",
+      );
+    }
     cached = new MqttLiveSource({
       url: cfg.mqtt.url,
       username: cfg.mqtt.username || undefined,
@@ -26,10 +37,8 @@ export function getLiveSource(): LiveSource {
       clientId: cfg.mqtt.clientId,
       topicPrefix: cfg.mqtt.topicPrefix,
       deviceId: cfg.deviceId,
-      // Circuit names come from QuestDB (the only DB read on the live path),
-      // refreshed occasionally rather than polled.
-      loadNames: async () =>
-        new Map((await repo.getCircuits()).map((c) => [c.id, c.name])),
+      // The only QuestDB read on the live path: circuit metadata, rarely.
+      loadMeta: async () => new Map((await repo.getCircuits()).map((c) => [c.id, c])),
       log: (level, msg, extra) => {
         const line = `[powerflow:mqtt] ${msg}`;
         if (level === "error") console.error(line, extra ?? "");
@@ -37,8 +46,6 @@ export function getLiveSource(): LiveSource {
         else console.log(line, extra ?? "");
       },
     });
-  } else {
-    cached = new PollingLiveSource(repo);
   }
 
   cached.ensureStarted();

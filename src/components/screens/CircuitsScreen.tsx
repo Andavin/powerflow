@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Segmented, Spinner, StatNumber, ErrorNote } from "@/components/primitives";
-import { useCircuits } from "@/lib/client/data";
+import { useLiveStream } from "@/lib/client/data";
 import { splitPower } from "@/lib/format";
 import type { Circuit } from "@/lib/types";
 
@@ -27,17 +27,18 @@ function sortCircuits(circuits: Circuit[], mode: SortMode): Circuit[] {
 }
 
 export function CircuitsScreen() {
-  const { data, error, isLoading } = useCircuits();
+  const { circuits: liveCircuits, connected, error } = useLiveStream();
   const [sort, setSort] = useState<SortMode>("activity");
   const [search, setSearch] = useState("");
 
   const circuits = useMemo(() => {
-    const list = data?.circuits ?? [];
     const filtered = search
-      ? list.filter((c) => c.name.toLowerCase().includes(search.toLowerCase()))
-      : list;
+      ? liveCircuits.filter((c) => c.name.toLowerCase().includes(search.toLowerCase()))
+      : liveCircuits;
     return sortCircuits(filtered, sort);
-  }, [data, sort, search]);
+  }, [liveCircuits, sort, search]);
+
+  const loading = liveCircuits.length === 0 && !connected;
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-4">
@@ -54,8 +55,8 @@ export function CircuitsScreen() {
         className="w-full rounded-2xl border border-border bg-surface px-4 py-3 text-fg outline-none placeholder:text-faint focus:border-battery"
       />
 
-      {error && <ErrorNote message={String(error.message ?? error)} />}
-      {isLoading && !data && (
+      {error && <ErrorNote message={String(error)} />}
+      {loading && (
         <div className="flex justify-center py-10">
           <Spinner />
         </div>
@@ -86,7 +87,7 @@ export function CircuitsScreen() {
             </li>
           );
         })}
-        {!isLoading && circuits.length === 0 && (
+        {!loading && circuits.length === 0 && (
           <li className="py-10 text-center text-sm text-faint">No circuits match.</li>
         )}
       </ul>

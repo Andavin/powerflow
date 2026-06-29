@@ -2,7 +2,7 @@
 
 import { FlowDiagram } from "@/components/FlowDiagram";
 import { Card, Spinner, StatNumber } from "@/components/primitives";
-import { useCircuits, useFlowStream } from "@/lib/client/data";
+import { useLiveStream } from "@/lib/client/data";
 import { formatWatts, formatPercent, splitPower } from "@/lib/format";
 import { SOURCE_COLOR } from "@/lib/palette";
 
@@ -18,11 +18,7 @@ function flowCaption(
 }
 
 export function FlowScreen() {
-  const { flow, top: liveTop, connected, error } = useFlowStream();
-  // The stream pushes top consumers live (MQTT); only fall back to polling
-  // /api/circuits when it hasn't.
-  const { data: circuitData } = useCircuits(liveTop.length === 0);
-  const top = liveTop.length > 0 ? liveTop : (circuitData?.top ?? []);
+  const { flow, top, connected, error } = useLiveStream();
 
   if (!flow) {
     return (

@@ -1,10 +1,12 @@
-import type { FlowSnapshot, TopConsumer } from "../types";
+import type { Circuit, FlowSnapshot, TopConsumer } from "../types";
 
 /** A coalesced real-time snapshot pushed to clients over SSE. */
 export interface LiveSnapshot {
   ts: string;
   flow: FlowSnapshot;
   top: TopConsumer[];
+  /** Full circuit list (live watts + relay), for the Circuits screen. */
+  circuits: Circuit[];
 }
 
 /**
@@ -20,4 +22,5 @@ export interface LiveSource {
   subscribe(listener: (snapshot: LiveSnapshot) => void): () => void;
 }
 
-export type NamesProvider = () => Promise<Map<string, string>>;
+/** Loads circuit metadata (id → Circuit) from QuestDB, looked up rarely. */
+export type MetaProvider = () => Promise<Map<string, Circuit>>;

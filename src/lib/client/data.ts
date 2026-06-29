@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import useSWR from "swr";
 import type {
   Circuit,
@@ -21,101 +21,60 @@ export const fetcher = async (url: string) => {
   return res.json();
 };
 
-export interface FlowState {
+export interface LiveState {
   flow: FlowSnapshot | null;
-  /** Top current consumers, pushed live alongside the flow (empty until first). */
+  /** Top current consumers, pushed live alongside the flow. */
   top: TopConsumer[];
+  /** Full circuit list with live watts + relay. */
+  circuits: Circuit[];
   connected: boolean;
   error: string | null;
 }
 
 /**
- * Live flow + top consumers via Server-Sent Events, with an automatic polling
- * fallback for the flow if the stream is unavailable (e.g. behind a buffering
- * proxy).
+ * The single real-time feed: flow, top consumers, and the full circuit list,
+ * over Server-Sent Events. EventSource reconnects automatically; there is no
+ * database polling. Stats/history are fetched separately, on demand.
  */
-export function useFlowStream(): FlowState {
+export function useLiveStream(): LiveState {
   const [flow, setFlow] = useState<FlowSnapshot | null>(null);
   const [top, setTop] = useState<TopConsumer[]>([]);
+  const [circuits, setCircuits] = useState<Circuit[]>([]);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    let es: EventSource | null = null;
     let cancelled = false;
+    const es = new EventSource("/api/stream");
 
-    const startPolling = () => {
-      if (pollRef.current) return;
-      const poll = async () => {
-        try {
-          const res = await fetch("/api/flow");
-          if (!res.ok) throw new Error(String(res.status));
-          if (!cancelled) {
-            setFlow(await res.json());
-            setError(null);
-          }
-        } catch (e) {
-          if (!cancelled) setError(e instanceof Error ? e.message : "offline");
-        }
-      };
-      void poll();
-      pollRef.current = setInterval(poll, 3000);
+    const onJson = <T,>(setter: (v: T) => void) => (e: Event) => {
+      if (cancelled) return;
+      setConnected(true);
+      setError(null);
+      try {
+        setter(JSON.parse((e as MessageEvent).data) as T);
+      } catch {
+        /* ignore malformed frame */
+      }
     };
 
-    try {
-      es = new EventSource("/api/stream");
-      es.addEventListener("flow", (e) => {
-        if (cancelled) return;
-        setConnected(true);
-        setError(null);
-        try {
-          setFlow(JSON.parse((e as MessageEvent).data));
-        } catch {
-          /* ignore malformed frame */
-        }
-      });
-      es.addEventListener("top", (e) => {
-        if (cancelled) return;
-        try {
-          setTop(JSON.parse((e as MessageEvent).data));
-        } catch {
-          /* ignore malformed frame */
-        }
-      });
-      es.addEventListener("stream-error", (e) => {
-        if (!cancelled) setError((e as MessageEvent).data);
-      });
-      es.onerror = () => {
-        if (cancelled) return;
-        setConnected(false);
-        // EventSource auto-reconnects; also start polling as a safety net.
-        startPolling();
-      };
-    } catch {
-      startPolling();
-    }
+    es.addEventListener("flow", onJson(setFlow));
+    es.addEventListener("top", onJson(setTop));
+    es.addEventListener("circuits", onJson(setCircuits));
+    es.addEventListener("stream-error", (e) => {
+      if (!cancelled) setError((e as MessageEvent).data);
+    });
+    es.onerror = () => {
+      if (!cancelled) setConnected(false); // EventSource auto-reconnects
+    };
 
     return () => {
       cancelled = true;
-      es?.close();
-      if (pollRef.current) clearInterval(pollRef.current);
+      es.close();
     };
   }, []);
 
-  return { flow, top, connected, error };
-}
-
-/**
- * Circuit list/top consumers via QuestDB. Pass `enabled: false` to disable the
- * poll when the live stream is already supplying top consumers over MQTT.
- */
-export function useCircuits(enabled = true) {
-  return useSWR<{ circuits: Circuit[]; top: TopConsumer[] }>(
-    enabled ? "/api/circuits" : null,
-    fetcher,
-    { refreshInterval: 5000, keepPreviousData: true },
-  );
+  return { flow, top, circuits, connected, error };
 }
 
 export interface StatsResponse {

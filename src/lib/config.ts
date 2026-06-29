@@ -7,7 +7,6 @@
  */
 
 export type DataMode = "live" | "mock";
-export type RealtimeMode = "mqtt" | "poll";
 
 export interface MqttConfig {
   url: string;
@@ -21,8 +20,6 @@ export interface MqttConfig {
 
 export interface PowerflowConfig {
   dataMode: DataMode;
-  /** Live data transport: event-driven MQTT, or QuestDB polling. */
-  realtime: RealtimeMode;
   questdbUrl: string;
   deviceId: string | null;
   timezone: string;
@@ -39,10 +36,8 @@ function bool(value: string | undefined, fallback: boolean): boolean {
 
 export function readConfig(env: NodeJS.ProcessEnv = process.env): PowerflowConfig {
   const dataMode: DataMode = env.POWERFLOW_DATA_MODE === "mock" ? "mock" : "live";
-  const realtime: RealtimeMode = env.POWERFLOW_REALTIME === "mqtt" ? "mqtt" : "poll";
   return {
     dataMode,
-    realtime,
     questdbUrl: (env.QUESTDB_URL ?? "http://127.0.0.1:9000").replace(/\/$/, ""),
     deviceId: env.POWERFLOW_DEVICE_ID?.trim() || null,
     // The panel lives in Whitefish, MT. All "today/week/month/year" boundaries

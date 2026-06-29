@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import mqtt from "mqtt";
+import type { Circuit } from "../types";
 import {
   applyMessage,
   buildSnapshot,
@@ -7,7 +8,7 @@ import {
   isFlowReady,
   type LiveState,
 } from "./state";
-import type { LiveSnapshot, LiveSource, NamesProvider } from "./types";
+import type { LiveSnapshot, LiveSource, MetaProvider } from "./types";
 
 export interface MqttSourceOptions {
   url: string; // e.g. mqtts://192.168.0.212:8883
@@ -18,10 +19,10 @@ export interface MqttSourceOptions {
   clientId: string;
   topicPrefix: string;
   deviceId: string;
-  /** Loads circuit id → name (from QuestDB); refreshed occasionally. */
-  loadNames: NamesProvider;
+  /** Loads circuit metadata (id → Circuit) from QuestDB; refreshed occasionally. */
+  loadMeta: MetaProvider;
   coalesceMs?: number;
-  namesRefreshMs?: number;
+  metaRefreshMs?: number;
   log?: (level: "info" | "warn" | "error", msg: string, extra?: unknown) => void;
 }
 
@@ -35,7 +36,7 @@ export class MqttLiveSource implements LiveSource {
   private readonly opts: Required<Omit<MqttSourceOptions, "username" | "password" | "caFile" | "log">> &
     Pick<MqttSourceOptions, "username" | "password" | "caFile" | "log">;
   private state: LiveState = emptyLiveState();
-  private names = new Map<string, string>();
+  private meta = new Map<string, Circuit>();
   private latest: LiveSnapshot | null = null;
   private readonly listeners = new Set<(s: LiveSnapshot) => void>();
   private client: mqtt.MqttClient | null = null;
@@ -44,15 +45,15 @@ export class MqttLiveSource implements LiveSource {
   private started = false;
 
   constructor(opts: MqttSourceOptions) {
-    this.opts = { coalesceMs: 750, namesRefreshMs: 600_000, ...opts };
+    this.opts = { coalesceMs: 750, metaRefreshMs: 600_000, ...opts };
   }
 
   ensureStarted(): void {
     if (this.started) return;
     this.started = true;
 
-    void this.refreshNames();
-    setInterval(() => void this.refreshNames(), this.opts.namesRefreshMs).unref?.();
+    void this.refreshMeta();
+    setInterval(() => void this.refreshMeta(), this.opts.metaRefreshMs).unref?.();
 
     const ca = this.opts.caFile ? [readFileSync(this.opts.caFile)] : undefined;
     // Pinned-CA LAN device: validate the chain against our CA but don't require
@@ -75,7 +76,12 @@ export class MqttLiveSource implements LiveSource {
     client.on("connect", () => {
       this.log("info", "MQTT connected", { url: this.opts.url });
       client.subscribe(
-        [`${p}/${d}/power-flows/+`, `${p}/${d}/bess/+`, `${p}/${d}/+/active_power`],
+        [
+          `${p}/${d}/power-flows/+`,
+          `${p}/${d}/bess/+`,
+          `${p}/${d}/+/active_power`,
+          `${p}/${d}/+/relay`,
+        ],
         { qos: 0 },
         (err) => err && this.log("error", "MQTT subscribe failed", err.message),
       );
@@ -99,18 +105,18 @@ export class MqttLiveSource implements LiveSource {
       if (!this.dirty) return;
       this.dirty = false;
       if (!isFlowReady(this.state)) return;
-      const snap = buildSnapshot(this.state, this.names);
+      const snap = buildSnapshot(this.state, this.meta);
       this.latest = snap;
       for (const l of this.listeners) l(snap);
     }, this.opts.coalesceMs);
     this.flushTimer.unref?.();
   }
 
-  private async refreshNames(): Promise<void> {
+  private async refreshMeta(): Promise<void> {
     try {
-      this.names = await this.opts.loadNames();
+      this.meta = await this.opts.loadMeta();
     } catch (err) {
-      this.log("warn", "circuit name refresh failed", err instanceof Error ? err.message : err);
+      this.log("warn", "circuit metadata refresh failed", err instanceof Error ? err.message : err);
     }
   }
 
