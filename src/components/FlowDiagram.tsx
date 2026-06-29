@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import type { FlowSnapshot } from "@/lib/types";
 import { SOURCE_COLOR, SOURCE_DIM } from "@/lib/palette";
 import { SolarIcon, GridIcon, BatteryIcon, HomeIcon } from "./icons";
-import { splitPower } from "@/lib/format";
+import { splitKw } from "@/lib/format";
 
 interface LegConfig {
   id: string;
@@ -51,7 +51,7 @@ function SourceLabel({
   watts: number;
   sub?: string;
 }) {
-  const { value, unit } = splitPower(Math.abs(watts));
+  const { value, unit } = splitKw(Math.abs(watts));
   return (
     <g>
       <svg x={x - 14} y={20} width={28} height={28} style={{ color }}>
@@ -163,7 +163,7 @@ export function FlowDiagram({ flow }: { flow: FlowSnapshot }) {
     return () => cancelAnimationFrame(raf);
   }, [streakKeys]);
 
-  const home = splitPower(flow.homeW);
+  const home = splitKw(flow.homeW);
 
   return (
     <svg

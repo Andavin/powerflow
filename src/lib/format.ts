@@ -17,6 +17,14 @@ export function splitPower(watts: number): ValueUnit {
   return { value: kw.toFixed(decimals), unit: "kW" };
 }
 
+/**
+ * Always-kW power label, one decimal. Used by the flow overview so the four
+ * source/home readings never flip between W and kW.
+ */
+export function splitKw(watts: number): ValueUnit {
+  return { value: (watts / 1000).toFixed(1), unit: "kW" };
+}
+
 /** Integer watts with thousands separators, e.g. "3,965 W". */
 export function formatWatts(watts: number): string {
   return `${Math.round(watts).toLocaleString("en-US")} W`;
