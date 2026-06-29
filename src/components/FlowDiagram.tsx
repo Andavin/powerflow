@@ -21,12 +21,24 @@ const ACTIVE_W = 15;
 // conduit tangent at render time so it streaks along the direction of travel.
 const SPINDLE = "M-14 0 Q0 4.2 14 0 Q0 -4.2 -14 0 Z";
 
-/** Streak count and travel duration (seconds) from power magnitude. */
-function streakParams(magnitude: number): { count: number; dur: number } {
-  if (magnitude < ACTIVE_W) return { count: 0, dur: 0 };
-  const count = magnitude > 2800 ? 2 : 1;
-  const dur = Math.max(1.15, 2.7 - magnitude / 3200);
-  return { count, dur };
+// Higher = slower. The travel duration scales by this; ~70% of the old speed.
+const SPEED_SCALE = 1.43;
+
+/** Travel duration (seconds) for one trip along a conduit. */
+function streakDuration(magnitude: number): number {
+  return Math.max(1.15, 2.7 - magnitude / 3200) * SPEED_SCALE;
+}
+
+/**
+ * Opacity along the trip: fades in at the source, full through the middle,
+ * fades out into the node. This hides the wrap (no "pop") and reads as the
+ * light flowing into the panel/source rather than snapping back.
+ */
+function edgeFade(p: number): number {
+  const f = 0.18;
+  if (p < f) return p / f;
+  if (p > 1 - f) return (1 - p) / f;
+  return 1;
 }
 
 interface StreakDef {
@@ -35,7 +47,6 @@ interface StreakDef {
   gradId: string;
   dur: number;
   forward: boolean;
-  phase: number;
 }
 
 function SourceLabel({
@@ -89,65 +100,61 @@ export function FlowDiagram({ flow }: { flow: FlowSnapshot }) {
     { id: "pf-home", d: "M160,320 L160,404", color: homeColor, dim: SOURCE_DIM.home, flow: flow.homeW },
   ];
 
-  const streaks: StreakDef[] = [];
-  for (const leg of legs) {
-    const mag = Math.abs(leg.flow);
-    if (mag < ACTIVE_W) continue;
-    const { count, dur } = streakParams(mag);
-    for (let i = 0; i < count; i++) {
-      streaks.push({
-        key: `${leg.id}-${i}`,
-        legId: leg.id,
-        gradId: `${leg.id}-grad`,
-        dur,
-        forward: leg.flow >= 0,
-        phase: i / count,
-      });
-    }
-  }
+  // One streak per active leg (no trains of lights).
+  const streaks: StreakDef[] = legs
+    .filter((leg) => Math.abs(leg.flow) >= ACTIVE_W)
+    .map((leg) => ({
+      key: leg.id,
+      legId: leg.id,
+      gradId: `${leg.id}-grad`,
+      dur: streakDuration(Math.abs(leg.flow)),
+      forward: leg.flow >= 0,
+    }));
 
-  // Refs to the conduit paths (for geometry) and the streak shapes (to move).
   const conduitRefs = useRef<Record<string, SVGPathElement | null>>({});
   const streakRefs = useRef<Record<string, SVGPathElement | null>>({});
-  // Latest streak config, read live by the animation loop so power changes
-  // (which tweak `dur`) don't restart the animation. Updated in an effect, not
-  // during render.
+  // Latest streak config + per-streak progress, read live by one persistent
+  // animation loop — so data refreshes never restart it and duration changes
+  // (from power changes / slowdown) apply smoothly.
   const streaksRef = useRef<StreakDef[]>(streaks);
+  const progressRef = useRef<Map<string, number>>(new Map());
   useEffect(() => {
     streaksRef.current = streaks;
   });
 
-  // Re-run the loop only when the *set* of streaks changes (a leg switching on
-  // or off), not on every power tick.
-  const streakKeys = streaks.map((s) => s.key).join("|");
-
+  // Single rAF loop for the component's lifetime — never torn down on updates.
   useEffect(() => {
     let raf = 0;
-    let start: number | null = null; // captured from the first rAF timestamp
+    let last: number | null = null;
     const lengths: Record<string, number> = {};
-    for (const id of Object.keys(conduitRefs.current)) {
-      const el = conduitRefs.current[id];
-      if (el) {
-        try {
-          lengths[id] = el.getTotalLength();
-        } catch {
-          /* not measurable yet */
-        }
-      }
-    }
 
     const tick = (now: number) => {
-      if (start === null) start = now;
-      const t = (now - start) / 1000;
+      const dt = last === null ? 0 : (now - last) / 1000;
+      last = now;
+      const progress = progressRef.current;
+      const live = new Set<string>();
+
       for (const s of streaksRef.current) {
+        live.add(s.key);
         const streakEl = streakRefs.current[s.key];
         const pathEl = conduitRefs.current[s.legId];
-        const len = lengths[s.legId];
-        if (!streakEl || !pathEl || !len) continue;
-        let prog = ((t / s.dur) + s.phase) % 1;
-        if (prog < 0) prog += 1;
-        if (!s.forward) prog = 1 - prog;
-        const dist = prog * len;
+        if (!streakEl || !pathEl) continue;
+        let len = lengths[s.legId];
+        if (!len) {
+          try {
+            len = lengths[s.legId] = pathEl.getTotalLength();
+          } catch {
+            continue;
+          }
+        }
+
+        // Integrate progress so a changing duration smoothly changes speed.
+        let p = progress.get(s.key) ?? 0;
+        p = (p + dt / s.dur) % 1;
+        progress.set(s.key, p);
+
+        const tp = s.forward ? p : 1 - p;
+        const dist = tp * len;
         const pt = pathEl.getPointAtLength(dist);
         const ahead = pathEl.getPointAtLength(Math.min(len, dist + 1.5));
         const ang = (Math.atan2(ahead.y - pt.y, ahead.x - pt.x) * 180) / Math.PI;
@@ -155,13 +162,18 @@ export function FlowDiagram({ flow }: { flow: FlowSnapshot }) {
           "transform",
           `translate(${pt.x.toFixed(2)} ${pt.y.toFixed(2)}) rotate(${ang.toFixed(1)})`,
         );
-        streakEl.style.opacity = "1";
+        streakEl.style.opacity = edgeFade(p).toFixed(3);
       }
+
+      // Forget streaks that are no longer active so they restart cleanly later.
+      for (const k of progress.keys()) if (!live.has(k)) progress.delete(k);
+
       raf = requestAnimationFrame(tick);
     };
+
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [streakKeys]);
+  }, []);
 
   const home = splitKw(flow.homeW);
 
@@ -234,7 +246,7 @@ export function FlowDiagram({ flow }: { flow: FlowSnapshot }) {
       <rect x={150} y={206} width={20} height={4} rx={2} fill="#9aa0ad" />
 
       <SourceLabel x={56} Icon={SolarIcon} color={SOURCE_COLOR.solar} watts={flow.solarW} />
-      <SourceLabel x={160} Icon={GridIcon} color={SOURCE_COLOR.grid} watts={flow.gridW} sub={flow.gridW < 0 ? "exporting" : undefined} />
+      <SourceLabel x={160} Icon={GridIcon} color={SOURCE_COLOR.grid} watts={flow.gridW} />
       <SourceLabel
         x={264}
         Icon={BatteryIcon}
