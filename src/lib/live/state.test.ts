@@ -33,12 +33,17 @@ describe("applyMessage — bess", () => {
   it("coerces soc to number and connected to boolean", () => {
     const s = emptyLiveState();
     apply(s, "ebus/5/nj-2338-00fq1/bess/soc", "56.2");
-    apply(s, "ebus/5/nj-2338-00fq1/bess/grid_state", "ON_GRID");
     apply(s, "ebus/5/nj-2338-00fq1/bess/connected", "false");
     expect(s.bess.soc).toBe(56.2);
-    expect(s.bess.grid_state).toBe("ON_GRID");
     // "false" must become boolean false, not truthy string.
     expect(s.bess.connected).toBe(false);
+  });
+
+  it("normalises hyphenated property names to underscores", () => {
+    const s = emptyLiveState();
+    // The panel publishes `grid-state`, not `grid_state`.
+    apply(s, "ebus/5/nj-2338-00fq1/bess/grid-state", "ON_GRID");
+    expect(s.bess.grid_state).toBe("ON_GRID");
   });
 });
 

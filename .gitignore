@@ -51,3 +51,6 @@ next-env.d.ts
 /.pnpm-store
 # npm lockfile (this project uses pnpm)
 package-lock.json
+
+# local dev certs (e.g. MQTT broker CA) — not committed
+/certs

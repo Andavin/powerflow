@@ -71,14 +71,17 @@ export function applyMessage(
   }
 
   if (node === "bess") {
-    if (property === "connected") {
+    // The panel publishes bess properties hyphenated (grid-state, vendor-name);
+    // normalise to the underscore keys the rest of the app uses.
+    const key = property.replace(/-/g, "_");
+    if (key === "connected") {
       state.bess.connected = payload === "true" || payload === "1";
-    } else if (property === "soc" || property === "soe") {
+    } else if (key === "soc" || key === "soe") {
       const v = num(payload);
       if (v === null) return false;
-      state.bess[property] = v;
+      state.bess[key] = v;
     } else {
-      state.bess[property] = payload;
+      state.bess[key] = payload;
     }
     return true;
   }
