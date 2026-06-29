@@ -1,19 +1,19 @@
 import type { NextRequest } from "next/server";
-import { getRepository } from "@/lib/getRepository";
+import { getLiveSource } from "@/lib/live/getLiveSource";
+import type { LiveSnapshot } from "@/lib/live/types";
 
 export const dynamic = "force-dynamic";
 
-const INTERVAL_MS = Number(process.env.POWERFLOW_STREAM_INTERVAL_MS ?? 2000);
-
 /**
- * Server-Sent Events stream of live flow snapshots.
+ * Server-Sent Events stream of live flow + top-consumer snapshots.
  *
- * QuestDB is poll-only, so we read the latest reading on an interval and push
- * it to the client. This drives the real-time flow animation; the client falls
- * back to plain polling if the stream drops.
+ * Backed by a shared live source (MQTT when configured, else QuestDB polling),
+ * so every connected client rides one upstream feed. Emits a `flow` event and a
+ * `top` event per coalesced snapshot.
  */
 export async function GET(request: NextRequest) {
-  const repo = getRepository();
+  const live = getLiveSource();
+  live.ensureStarted();
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream<Uint8Array>({
@@ -25,21 +25,20 @@ export async function GET(request: NextRequest) {
           encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
         );
       };
-
-      const tick = async () => {
-        try {
-          write("flow", await repo.getFlow());
-        } catch (err) {
-          write("stream-error", {
-            message: err instanceof Error ? err.message : "unknown",
-          });
-        }
+      const send = (snap: LiveSnapshot) => {
+        write("flow", snap.flow);
+        write("top", snap.top);
       };
+
+      // Prime with the latest snapshot, then stream updates.
+      const initial = live.current();
+      if (initial) send(initial);
+      const unsubscribe = live.subscribe(send);
 
       const cleanup = () => {
         if (closed) return;
         closed = true;
-        clearInterval(interval);
+        unsubscribe();
         request.signal.removeEventListener("abort", cleanup);
         try {
           controller.close();
@@ -47,10 +46,6 @@ export async function GET(request: NextRequest) {
           /* already closed */
         }
       };
-
-      // Prime immediately, then poll.
-      void tick();
-      const interval = setInterval(tick, INTERVAL_MS);
       request.signal.addEventListener("abort", cleanup);
     },
   });

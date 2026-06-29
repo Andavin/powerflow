@@ -58,6 +58,22 @@ Copy `.env.example` to `.env.local` and set values:
 | `POWERFLOW_PASSWORD`       | Login password                                      |
 | `POWERFLOW_SESSION_SECRET` | Long random string signing sessions                 |
 | `POWERFLOW_AUTH_DISABLED`  | `1` to bypass auth (tests / trusted LAN only)       |
+| `POWERFLOW_REALTIME`       | `mqtt` (event-driven) or `poll` (QuestDB, default)  |
+| `POWERFLOW_MQTT_*`         | Broker URL/credentials/CA when `REALTIME=mqtt`      |
+
+## Real-time transport
+
+Live flow + top consumers reach the browser over SSE (`/api/stream`), fed by a
+shared source:
+
+- **`poll`** (default): the server reads QuestDB on a short interval.
+- **`mqtt`**: subscribes directly to the panel's MQTT feed — only `power-flows`,
+  `bess`, and per-circuit `active_power` — for event-driven updates with no DB
+  polling. Circuit names are the one thing still read from QuestDB (rarely).
+  Requires `POWERFLOW_DEVICE_ID` and the `POWERFLOW_MQTT_*` settings; mount the
+  panel's `ca.pem` and point `POWERFLOW_MQTT_CA_FILE` at it.
+
+Stats and history always query QuestDB (they're historical), on demand.
 
 ## Develop
 

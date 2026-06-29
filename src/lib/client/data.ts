@@ -23,16 +23,20 @@ export const fetcher = async (url: string) => {
 
 export interface FlowState {
   flow: FlowSnapshot | null;
+  /** Top current consumers, pushed live alongside the flow (empty until first). */
+  top: TopConsumer[];
   connected: boolean;
   error: string | null;
 }
 
 /**
- * Live flow via Server-Sent Events, with an automatic polling fallback if the
- * stream is unavailable (e.g. behind a buffering proxy).
+ * Live flow + top consumers via Server-Sent Events, with an automatic polling
+ * fallback for the flow if the stream is unavailable (e.g. behind a buffering
+ * proxy).
  */
 export function useFlowStream(): FlowState {
   const [flow, setFlow] = useState<FlowSnapshot | null>(null);
+  const [top, setTop] = useState<TopConsumer[]>([]);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -71,6 +75,14 @@ export function useFlowStream(): FlowState {
           /* ignore malformed frame */
         }
       });
+      es.addEventListener("top", (e) => {
+        if (cancelled) return;
+        try {
+          setTop(JSON.parse((e as MessageEvent).data));
+        } catch {
+          /* ignore malformed frame */
+        }
+      });
       es.addEventListener("stream-error", (e) => {
         if (!cancelled) setError((e as MessageEvent).data);
       });
@@ -91,12 +103,16 @@ export function useFlowStream(): FlowState {
     };
   }, []);
 
-  return { flow, connected, error };
+  return { flow, top, connected, error };
 }
 
-export function useCircuits() {
+/**
+ * Circuit list/top consumers via QuestDB. Pass `enabled: false` to disable the
+ * poll when the live stream is already supplying top consumers over MQTT.
+ */
+export function useCircuits(enabled = true) {
   return useSWR<{ circuits: Circuit[]; top: TopConsumer[] }>(
-    "/api/circuits",
+    enabled ? "/api/circuits" : null,
     fetcher,
     { refreshInterval: 5000, keepPreviousData: true },
   );

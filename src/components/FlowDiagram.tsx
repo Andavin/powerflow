@@ -110,9 +110,12 @@ export function FlowDiagram({ flow }: { flow: FlowSnapshot }) {
   const conduitRefs = useRef<Record<string, SVGPathElement | null>>({});
   const streakRefs = useRef<Record<string, SVGPathElement | null>>({});
   // Latest streak config, read live by the animation loop so power changes
-  // (which tweak `dur`) don't restart the animation.
+  // (which tweak `dur`) don't restart the animation. Updated in an effect, not
+  // during render.
   const streaksRef = useRef<StreakDef[]>(streaks);
-  streaksRef.current = streaks;
+  useEffect(() => {
+    streaksRef.current = streaks;
+  });
 
   // Re-run the loop only when the *set* of streaks changes (a leg switching on
   // or off), not on every power tick.
@@ -120,7 +123,7 @@ export function FlowDiagram({ flow }: { flow: FlowSnapshot }) {
 
   useEffect(() => {
     let raf = 0;
-    const start = performance.now();
+    let start: number | null = null; // captured from the first rAF timestamp
     const lengths: Record<string, number> = {};
     for (const id of Object.keys(conduitRefs.current)) {
       const el = conduitRefs.current[id];
@@ -134,6 +137,7 @@ export function FlowDiagram({ flow }: { flow: FlowSnapshot }) {
     }
 
     const tick = (now: number) => {
+      if (start === null) start = now;
       const t = (now - start) / 1000;
       for (const s of streaksRef.current) {
         const streakEl = streakRefs.current[s.key];
@@ -157,7 +161,6 @@ export function FlowDiagram({ flow }: { flow: FlowSnapshot }) {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [streakKeys]);
 
   const home = splitPower(flow.homeW);

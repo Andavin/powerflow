@@ -18,9 +18,11 @@ function flowCaption(
 }
 
 export function FlowScreen() {
-  const { flow, connected, error } = useFlowStream();
-  const { data: circuitData } = useCircuits();
-  const top = circuitData?.top ?? [];
+  const { flow, top: liveTop, connected, error } = useFlowStream();
+  // The stream pushes top consumers live (MQTT); only fall back to polling
+  // /api/circuits when it hasn't.
+  const { data: circuitData } = useCircuits(liveTop.length === 0);
+  const top = liveTop.length > 0 ? liveTop : (circuitData?.top ?? []);
 
   if (!flow) {
     return (
