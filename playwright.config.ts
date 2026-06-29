@@ -31,11 +31,12 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `npm run build && npm run start -- --port ${PORT}`,
+    command: `pnpm run build && pnpm run start`,
     url: baseURL,
     timeout: 180_000,
     reuseExistingServer: !process.env.CI,
     env: {
+      PORT: String(PORT),
       POWERFLOW_DATA_MODE: "mock",
       POWERFLOW_AUTH_DISABLED: "1",
       NODE_ENV: "production",

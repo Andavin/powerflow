@@ -78,14 +78,17 @@ Stats and history always query QuestDB (they're historical), on demand.
 
 ## Develop
 
-```bash
-npm install
-npm run dev            # http://localhost:3000
+This project uses **pnpm** (pinned via `package.json`'s `packageManager`; run
+`corepack enable` once to get it).
 
-npm test               # Vitest unit tests (no database needed)
-npm run test:e2e       # Playwright (boots the app in mock mode)
-npm run typecheck
-npm run lint
+```bash
+pnpm install
+pnpm dev               # http://localhost:3000
+
+pnpm test              # Vitest unit tests (no database needed)
+pnpm test:e2e          # Playwright (boots the app in mock mode)
+pnpm typecheck
+pnpm lint
 ```
 
 Tests never touch the database: unit tests exercise pure logic and a fake

@@ -46,3 +46,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# pnpm content-addressable store (cache, never commit)
+/.pnpm-store
+# npm lockfile (this project uses pnpm)
+package-lock.json

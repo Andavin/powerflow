@@ -1,3 +1,7 @@
+# Standalone project (not part of the parent span-monitor workspace).
+# Explicitly allow build scripts for the native deps that need them.
 allowBuilds:
-  sharp: set this to true or false
-  unrs-resolver: set this to true or false
+  "@tailwindcss/oxide": true
+  esbuild: true
+  sharp: true
+  unrs-resolver: true
