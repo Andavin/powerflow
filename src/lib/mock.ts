@@ -197,6 +197,29 @@ export class MockRepository implements Repository {
       }))
       .sort((a, b) => b.kWh - a.kWh);
   }
+
+  async getCircuitSeries(circuitId: string, window: TimeWindow): Promise<EnergySeries> {
+    const def = CIRCUIT_DEFS.find(([id]) => id === circuitId);
+    const watts = def?.[2] ?? 100;
+    const starts = bucketStarts(window);
+    const hours = window.bucket === "hour" ? 1 : window.bucket === "day" ? 24 : 24 * 30;
+    let total = 0;
+    const points: EnergyPoint[] = starts.map((ms, i) => {
+      const j = rand(ms / 1e7 + i);
+      const kWh = round3((watts / 1000) * hours * (0.25 + j * 0.4));
+      total += kWh;
+      return { ts: new Date(ms).toISOString(), kWh };
+    });
+    return {
+      source: "home",
+      range: "custom",
+      bucket: window.bucket,
+      from: window.from,
+      to: window.to,
+      points,
+      totals: { kWh: round3(total) },
+    };
+  }
 }
 
 /** Synthesize bucket-start instants across a window (nominal stepping). */

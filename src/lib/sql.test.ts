@@ -8,6 +8,7 @@ import {
   flowSeriesSql,
   socSeriesSql,
   circuitEnergySql,
+  circuitSeriesSql,
   flowTotalsSql,
 } from "./sql";
 import type { TimeWindow } from "./time";
@@ -102,6 +103,20 @@ describe("circuitEnergySql", () => {
     expect(sql).toContain("node_type = 'circuit'");
     expect(sql).toContain("sum(imported_wh)");
     expect(sql).toContain("GROUP BY node_id, name");
+  });
+});
+
+describe("circuitSeriesSql", () => {
+  it("samples one circuit's energy, tz-aligned with zero fill", () => {
+    const sql = circuitSeriesSql("abc123", WINDOW, TZ, "dev1");
+    expect(sql).toContain("node_id = 'abc123'");
+    expect(sql).toContain("node_type = 'circuit'");
+    expect(sql).toContain("sum(exported_wh)");
+    expect(sql).toContain("SAMPLE BY 1h FILL(0)");
+    expect(sql).toContain("ALIGN TO CALENDAR TIME ZONE 'America/Denver'");
+  });
+  it("escapes the circuit id", () => {
+    expect(circuitSeriesSql("a'b", WINDOW, TZ, null)).toContain("node_id = 'a''b'");
   });
 });
 

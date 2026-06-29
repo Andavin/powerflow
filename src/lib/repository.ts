@@ -10,6 +10,7 @@ import type { TimeWindow } from "./time";
 import type { QuestDbClient } from "./questdb";
 import {
   circuitEnergySql,
+  circuitSeriesSql,
   circuitsLatestSql,
   flowSeriesSql,
   flowTotalsSql,
@@ -20,6 +21,7 @@ import {
 } from "./sql";
 import {
   circuitEnergyFromRows,
+  circuitSeriesFromRows,
   homeSourceMix,
   num,
   seriesFromFlowRows,
@@ -41,6 +43,7 @@ export interface Repository {
   getEnergySeries(source: StatSource, window: TimeWindow): Promise<EnergySeries>;
   getSocSeries(window: TimeWindow): Promise<SocPoint[]>;
   getCircuitEnergy(window: TimeWindow): Promise<CircuitEnergy[]>;
+  getCircuitSeries(circuitId: string, window: TimeWindow): Promise<EnergySeries>;
 }
 
 export interface QuestDbRepositoryOptions {
@@ -127,5 +130,11 @@ export class QuestDbRepository implements Repository {
       ? homeSourceMix(totalsRows[0])
       : { solar: 0, battery: 0, grid: 0 };
     return circuitEnergyFromRows(circuitRows, mix);
+  }
+
+  async getCircuitSeries(circuitId: string, window: TimeWindow): Promise<EnergySeries> {
+    const device = await this.device();
+    const rows = await this.client.query(circuitSeriesSql(circuitId, window, this.timezone, device));
+    return circuitSeriesFromRows(rows, window);
   }
 }

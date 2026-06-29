@@ -8,6 +8,7 @@ import {
   integrate,
   seriesFromFlowRows,
   circuitEnergyFromRows,
+  circuitSeriesFromRows,
   homeSourceMix,
   num,
 } from "./transform";
@@ -173,6 +174,24 @@ describe("homeSourceMix + circuitEnergyFromRows", () => {
     // solar 3000, battery 1, grid 1 -> solar ~0.999
     expect(mix.solar).toBeGreaterThan(0.99);
     expect(mix.solar + mix.battery + mix.grid).toBeCloseTo(1, 2);
+  });
+
+  it("builds a circuit energy series from summed Wh", () => {
+    const window: TimeWindow = {
+      from: "2026-06-29T06:00:00.000Z",
+      to: "2026-06-29T08:00:00.000Z",
+      bucket: "hour",
+    };
+    const series = circuitSeriesFromRows(
+      [
+        { ts: "2026-06-29T06:00:00.000Z", wh: 3 },
+        { ts: "2026-06-29T07:00:00.000Z", wh: 6474 },
+      ],
+      window,
+    );
+    expect(series.points.map((p) => p.kWh)).toEqual([0.003, 6.474]);
+    expect(series.totals.kWh).toBe(6.477);
+    expect(series.bucket).toBe("hour");
   });
 
   it("attaches mix and filters zero-energy circuits", () => {

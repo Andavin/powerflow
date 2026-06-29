@@ -229,6 +229,30 @@ export function circuitEnergyFromRows(
 }
 
 /**
+ * Energy series for a single circuit from `circuitSeriesSql` rows. power_usage
+ * already stores energy per period (Wh), so each bucket is just the summed Wh
+ * (no average-power integration). Reuses EnergySeries with a neutral "home"
+ * source for charting.
+ */
+export function circuitSeriesFromRows(rows: Row[], window: TimeWindow): EnergySeries {
+  let total = 0;
+  const points: EnergyPoint[] = rows.map((r) => {
+    const kWh = round3(num0(r.wh) / 1000);
+    total += kWh;
+    return { ts: str(r.ts)!, kWh };
+  });
+  return {
+    source: "home",
+    range: "custom",
+    bucket: window.bucket,
+    from: window.from,
+    to: window.to,
+    points,
+    totals: { kWh: round3(total) },
+  };
+}
+
+/**
  * Home-wide source mix (fractions that sum to ~1) from a `flowTotalsSql` row.
  * Only supplying sources count: solar, battery discharge, grid import.
  */

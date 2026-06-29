@@ -128,3 +128,26 @@ export function flowTotalsSql(
     `count() n FROM power_flows ${w}`
   );
 }
+
+/**
+ * Per-bucket consumption energy (Wh summed) for a single circuit, timezone
+ * aligned. exported_wh is the energy delivered to the circuit (its consumption).
+ */
+export function circuitSeriesSql(
+  circuitId: string,
+  window: TimeWindow,
+  tz: string,
+  deviceId: string | null,
+): string {
+  const w = where([
+    deviceEq(deviceId),
+    `node_id = '${escapeLiteral(circuitId)}'`,
+    "node_type = 'circuit'",
+    timeRange(window),
+  ]);
+  const unit = sampleByUnit(window.bucket);
+  return (
+    `SELECT ts, sum(exported_wh) wh FROM power_usage ${w} ` +
+    `SAMPLE BY ${unit} FILL(0) ALIGN TO CALENDAR TIME ZONE '${escapeLiteral(tz)}'`
+  );
+}

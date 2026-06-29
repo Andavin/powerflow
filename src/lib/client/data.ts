@@ -105,6 +105,22 @@ export function useStats(
   });
 }
 
+export function useCircuitStats(
+  id: string | null,
+  range: StatRange | "custom",
+  custom?: { from: string; to: string },
+) {
+  const params =
+    range === "custom" && custom
+      ? `from=${encodeURIComponent(custom.from)}&to=${encodeURIComponent(custom.to)}`
+      : `range=${range}`;
+  const key = id ? `/api/circuit-stats?id=${encodeURIComponent(id)}&${params}` : null;
+  return useSWR<{ range: StatRange | "custom"; series: EnergySeries }>(key, fetcher, {
+    refreshInterval: range === "today" ? 30_000 : 0,
+    keepPreviousData: true,
+  });
+}
+
 export function useCircuitEnergy(
   range: StatRange | "custom",
   custom?: { from: string; to: string },
