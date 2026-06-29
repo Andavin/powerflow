@@ -10,17 +10,33 @@ import { SOURCE_COLOR, SOURCE_LABEL } from "@/lib/palette";
 import { splitEnergy, splitPower, formatPercent } from "@/lib/format";
 import type { EnergySeries, StatSource, TopConsumer } from "@/lib/types";
 
-function summaryValue(series: EnergySeries): { value: string; unit: string; sub: string } {
+interface Metric {
+  value: string;
+  unit: string;
+  label: string;
+}
+
+/**
+ * Today's energy for a card. Bidirectional sources (battery, grid) return two
+ * labelled values; solar/home return one.
+ */
+function cardMetrics(series: EnergySeries): Metric[] {
+  const t = series.totals;
   if (series.source === "battery") {
-    const d = splitEnergy(series.totals.dischargedKWh ?? 0);
-    return { ...d, sub: `${splitEnergy(series.totals.chargedKWh ?? 0).value} kWh charged` };
+    return [
+      { ...splitEnergy(t.chargedKWh ?? 0), label: "charged" },
+      { ...splitEnergy(t.dischargedKWh ?? 0), label: "discharged" },
+    ];
   }
   if (series.source === "grid") {
-    const imp = splitEnergy(series.totals.importedKWh ?? 0);
-    return { ...imp, sub: `${splitEnergy(series.totals.exportedKWh ?? 0).value} kWh exported` };
+    return [
+      { ...splitEnergy(t.importedKWh ?? 0), label: "imported" },
+      { ...splitEnergy(t.exportedKWh ?? 0), label: "exported" },
+    ];
   }
-  const t = splitEnergy(series.totals.kWh);
-  return { ...t, sub: series.source === "solar" ? "generated today" : "consumed today" };
+  return [
+    { ...splitEnergy(t.kWh), label: series.source === "solar" ? "generated" : "consumed" },
+  ];
 }
 
 function SourceStatCard({ source }: { source: StatSource }) {
@@ -28,7 +44,7 @@ function SourceStatCard({ source }: { source: StatSource }) {
   const Icon = SOURCE_ICON[source];
   const color = SOURCE_COLOR[source];
   const series = data?.series;
-  const summary = series ? summaryValue(series) : null;
+  const metrics = series ? cardMetrics(series) : null;
   const spark = series
     ? series.points.map((p) =>
         source === "battery" ? (p.dischargedKWh ?? 0) : Math.max(0, p.kWh),
@@ -43,11 +59,24 @@ function SourceStatCard({ source }: { source: StatSource }) {
         </span>
         {SOURCE_LABEL[source]}
       </div>
-      {summary ? (
+      {metrics ? (
         <>
-          <StatNumber value={summary.value} unit={summary.unit} color={color} className="text-3xl" />
-          <div className="flex items-end justify-between gap-2">
-            <span className="text-xs text-faint">{summary.sub}</span>
+          {metrics.length === 1 ? (
+            <StatNumber value={metrics[0].value} unit={metrics[0].unit} color={color} className="text-3xl" />
+          ) : (
+            <div className="flex gap-6">
+              {metrics.map((m) => (
+                <div key={m.label}>
+                  <StatNumber value={m.value} unit={m.unit} color={color} className="text-2xl" />
+                  <div className="text-xs text-muted">{m.label}</div>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="mt-auto flex items-end justify-between gap-2 pt-1">
+            <span className="text-xs text-faint">
+              {metrics.length === 1 ? `${metrics[0].label} today` : "today"}
+            </span>
             <Sparkline values={spark} color={color} />
           </div>
         </>
