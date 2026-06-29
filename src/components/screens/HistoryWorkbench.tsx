@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import {
   Bar,
   BarChart,
@@ -12,11 +13,100 @@ import {
 } from "recharts";
 import { Card, Spinner, StatNumber, ErrorNote } from "@/components/primitives";
 import { SOURCE_ICON } from "@/components/icons";
-import { useStats } from "@/lib/client/data";
+import { useStats, useCircuitEnergy } from "@/lib/client/data";
 import { addDaysStr, dayCount, dayRangeWindow, todayStr } from "@/lib/client/tz";
 import { SOURCE_COLOR, SOURCE_LABEL, AXIS, GRID_LINE } from "@/lib/palette";
 import { splitEnergy } from "@/lib/format";
 import type { EnergyPoint, EnergySeries, StatSource } from "@/lib/types";
+
+interface CircuitDelta {
+  id: string;
+  name: string;
+  kWhA: number;
+  kWhB: number | null;
+  /** Fractional change vs comparison period, or null when not comparable. */
+  delta: number | null;
+}
+
+function CircuitBreakdown({
+  windowA,
+  windowB,
+  compare,
+}: {
+  windowA: { from: string; to: string };
+  windowB: { from: string; to: string };
+  compare: boolean;
+}) {
+  const a = useCircuitEnergy("custom", windowA);
+  const b = useCircuitEnergy("custom", compare ? windowB : windowA);
+
+  const rows = useMemo<CircuitDelta[]>(() => {
+    const listA = a.data?.circuits ?? [];
+    const byB = new Map((b.data?.circuits ?? []).map((c) => [c.id, c.kWh]));
+    return listA
+      .map((c) => {
+        const kWhB = compare ? byB.get(c.id) ?? 0 : null;
+        const delta = compare && kWhB != null && kWhB > 0 ? (c.kWh - kWhB) / kWhB : null;
+        return { id: c.id, name: c.name, kWhA: c.kWh, kWhB, delta };
+      })
+      .filter((c) => c.kWhA > 0 || (c.kWhB ?? 0) > 0)
+      .sort((x, y) => y.kWhA - x.kWhA);
+  }, [a.data, b.data, compare]);
+
+  if (a.isLoading && !a.data) {
+    return (
+      <Card className="flex h-[160px] items-center justify-center p-5">
+        <Spinner />
+      </Card>
+    );
+  }
+  if (rows.length === 0) return null;
+
+  const max = rows[0].kWhA || 1;
+
+  return (
+    <Card className="p-5">
+      <h2 className="mb-1 text-sm font-semibold text-muted">
+        What used the most in this period?
+      </h2>
+      <p className="mb-4 text-xs text-faint">
+        {compare ? "Ranked by usage, with the change vs the comparison period." : "Ranked by energy use. Click a circuit for its full history."}
+      </p>
+      <ul className="flex flex-col gap-1.5">
+        {rows.slice(0, 12).map((c) => {
+          const e = splitEnergy(c.kWhA);
+          return (
+            <li key={c.id}>
+              <Link
+                href={`/circuits/${encodeURIComponent(c.id)}`}
+                className="block rounded-xl px-3 py-2.5 transition hover:bg-surface-2"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="min-w-0 flex-1 truncate text-sm">{c.name}</span>
+                  {compare && c.delta != null && (
+                    <span
+                      className="text-xs tabular-nums"
+                      style={{ color: c.delta <= 0 ? SOURCE_COLOR.battery : SOURCE_COLOR.solar }}
+                    >
+                      {c.delta > 0 ? "↑" : "↓"} {Math.abs(c.delta * 100).toFixed(0)}%
+                    </span>
+                  )}
+                  <StatNumber value={e.value} unit={e.unit} color={SOURCE_COLOR.home} className="w-20 text-right text-sm" />
+                </div>
+                <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-surface-2">
+                  <div
+                    className="h-full rounded-full"
+                    style={{ width: `${Math.max(2, (c.kWhA / max) * 100)}%`, background: SOURCE_COLOR.home }}
+                  />
+                </div>
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </Card>
+  );
+}
 
 const SOURCES: StatSource[] = ["home", "solar", "battery", "grid"];
 
@@ -231,6 +321,9 @@ export function HistoryWorkbench() {
           </ResponsiveContainer>
         )}
       </Card>
+
+      {/* Per-circuit ranking + comparison (always consumption-based) */}
+      <CircuitBreakdown windowA={windowA} windowB={windowB} compare={compare} />
     </div>
   );
 }
