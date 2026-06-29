@@ -9,10 +9,11 @@ import { splitKw } from "@/lib/format";
 interface LegConfig {
   id: string;
   d: string;
-  color: string;
   dim: string;
   /** Signed power; positive = flows toward the panel/home (forward along d). */
   flow: number;
+  /** Gradient the streak fills with (the home leg picks the dominant source). */
+  gradId: string;
 }
 
 const ACTIVE_W = 15;
@@ -25,10 +26,20 @@ const SPINDLE = "M-14 0 Q0 4.2 14 0 Q0 -4.2 -14 0 Z";
 // power, so all the lights move at the same pace. Lower = calmer.
 const SPEED_PX_PER_SEC = 46;
 
+// Fixed per-colour streak gradients (bright-core → colour → transparent). Kept
+// stable so React never recolours them mid-trip; the home streak switches
+// between these imperatively at trip boundaries.
+const GRADS = [
+  { id: "pf-grad-solar", color: SOURCE_COLOR.solar },
+  { id: "pf-grad-battery", color: SOURCE_COLOR.battery },
+  { id: "pf-grad-grid", color: SOURCE_COLOR.grid },
+  { id: "pf-grad-home", color: SOURCE_COLOR.home },
+] as const;
+
 /**
  * Opacity along the trip: fades in at the source, full through the middle,
- * fades out into the node. This hides the wrap (no "pop") and reads as the
- * light flowing into the panel/source rather than snapping back.
+ * fades out into the node. Hides the wrap (no "pop") and reads as the light
+ * flowing into the panel/source rather than snapping back.
  */
 function edgeFade(p: number): number {
   const f = 0.18;
@@ -80,43 +91,42 @@ function SourceLabel({
 }
 
 export function FlowDiagram({ flow }: { flow: FlowSnapshot }) {
-  // The home leg is tinted by whichever source is supplying the most power.
+  // The home streak takes the colour of whichever source is supplying the most.
   const supply = [
-    { c: SOURCE_COLOR.solar, w: flow.solarW },
-    { c: SOURCE_COLOR.grid, w: Math.max(0, flow.gridW) },
-    { c: SOURCE_COLOR.battery, w: Math.max(0, flow.batteryW) },
+    { grad: "pf-grad-solar", w: flow.solarW },
+    { grad: "pf-grad-grid", w: Math.max(0, flow.gridW) },
+    { grad: "pf-grad-battery", w: Math.max(0, flow.batteryW) },
   ].sort((a, b) => b.w - a.w);
-  const homeColor = supply[0].w > 0 ? supply[0].c : SOURCE_COLOR.home;
+  const homeGrad = supply[0].w > 0 ? supply[0].grad : "pf-grad-home";
 
   const legs: LegConfig[] = [
-    { id: "pf-solar", d: "M56,96 C56,150 140,150 140,188", color: SOURCE_COLOR.solar, dim: SOURCE_DIM.solar, flow: flow.solarW },
-    { id: "pf-grid", d: "M160,96 L160,188", color: SOURCE_COLOR.grid, dim: SOURCE_DIM.grid, flow: flow.gridW },
-    { id: "pf-battery", d: "M264,96 C264,150 180,150 180,188", color: SOURCE_COLOR.battery, dim: SOURCE_DIM.battery, flow: flow.batteryW },
-    { id: "pf-home", d: "M160,320 L160,404", color: homeColor, dim: SOURCE_DIM.home, flow: flow.homeW },
+    { id: "pf-solar", d: "M56,96 C56,150 140,150 140,188", dim: SOURCE_DIM.solar, flow: flow.solarW, gradId: "pf-grad-solar" },
+    { id: "pf-grid", d: "M160,96 L160,188", dim: SOURCE_DIM.grid, flow: flow.gridW, gradId: "pf-grad-grid" },
+    { id: "pf-battery", d: "M264,96 C264,150 180,150 180,188", dim: SOURCE_DIM.battery, flow: flow.batteryW, gradId: "pf-grad-battery" },
+    { id: "pf-home", d: "M160,320 L160,404", dim: SOURCE_DIM.home, flow: flow.homeW, gradId: homeGrad },
   ];
 
   // One streak per active leg (no trains of lights). A leg with no flow has no
-  // streak — the "queue" is empty and nothing is shown.
+  // streak — the intent "queue" is empty and nothing is shown.
   const streaks: StreakDef[] = legs
     .filter((leg) => Math.abs(leg.flow) >= ACTIVE_W)
     .map((leg) => ({
       key: leg.id,
       legId: leg.id,
-      gradId: `${leg.id}-grad`,
+      gradId: leg.gradId,
       forward: leg.flow >= 0,
     }));
 
   const conduitRefs = useRef<Record<string, SVGPathElement | null>>({});
   const streakRefs = useRef<Record<string, SVGPathElement | null>>({});
-  // Latest streak config + per-streak progress, read live by one persistent
-  // animation loop — so data refreshes never restart it and duration changes
-  // (from power changes / slowdown) apply smoothly.
+  // The single pending intent per streak, read live by one persistent loop.
+  // Direction and colour are latched for the in-progress trip, so a mid-trip
+  // change never interrupts it — the streak finishes its line, then the next
+  // trip adopts the current direction/colour.
   const streaksRef = useRef<StreakDef[]>(streaks);
   const progressRef = useRef<Map<string, number>>(new Map());
-  // Direction latched for the in-progress trip, so a mid-trip power reversal
-  // doesn't interrupt it — the streak finishes its line, then the next trip
-  // picks up the current direction.
   const dirRef = useRef<Map<string, boolean>>(new Map());
+  const gradRef = useRef<Map<string, string>>(new Map());
   useEffect(() => {
     streaksRef.current = streaks;
   });
@@ -132,6 +142,7 @@ export function FlowDiagram({ flow }: { flow: FlowSnapshot }) {
       last = now;
       const progress = progressRef.current;
       const dir = dirRef.current;
+      const grad = gradRef.current;
       const live = new Set<string>();
 
       for (const s of streaksRef.current) {
@@ -150,16 +161,23 @@ export function FlowDiagram({ flow }: { flow: FlowSnapshot }) {
 
         let p = progress.get(s.key);
         if (p === undefined) {
+          // Start of a trip: latch direction + colour.
           p = 0;
-          dir.set(s.key, s.forward); // latch direction at the start of a trip
+          dir.set(s.key, s.forward);
+          grad.set(s.key, s.gradId);
+          streakEl.setAttribute("fill", `url(#${s.gradId})`);
         }
         // Constant pixels/second → uniform visual speed on every leg.
         p += (dt * SPEED_PX_PER_SEC) / len;
         if (p >= 1) {
           p -= Math.floor(p);
-          // New trip: only now adopt any direction change, so a streak always
-          // finishes the line it's on instead of reversing mid-flight.
+          // New trip: only now adopt any direction/colour change, so a streak
+          // always finishes the line it's on instead of switching mid-flight.
           dir.set(s.key, s.forward);
+          if (grad.get(s.key) !== s.gradId) {
+            grad.set(s.key, s.gradId);
+            streakEl.setAttribute("fill", `url(#${s.gradId})`);
+          }
         }
         progress.set(s.key, p);
 
@@ -181,6 +199,7 @@ export function FlowDiagram({ flow }: { flow: FlowSnapshot }) {
         if (!live.has(k)) {
           progress.delete(k);
           dir.delete(k);
+          grad.delete(k);
         }
 
       raf = requestAnimationFrame(tick);
@@ -200,13 +219,11 @@ export function FlowDiagram({ flow }: { flow: FlowSnapshot }) {
       aria-label={`Energy flow: home ${flow.homeW} watts, solar ${flow.solarW}, grid ${flow.gridW}, battery ${flow.batteryW}`}
     >
       <defs>
-        {/* Bright-core → colour → transparent fill so each streak glows in the
-            middle and fades to its tapered ends. */}
-        {legs.map((leg) => (
-          <radialGradient key={leg.id} id={`${leg.id}-grad`} cx="0.5" cy="0.5" r="0.5">
+        {GRADS.map((g) => (
+          <radialGradient key={g.id} id={g.id} cx="0.5" cy="0.5" r="0.5">
             <stop offset="0%" stopColor="#ffffff" stopOpacity="1" />
-            <stop offset="35%" stopColor={leg.color} stopOpacity="1" />
-            <stop offset="100%" stopColor={leg.color} stopOpacity="0" />
+            <stop offset="35%" stopColor={g.color} stopOpacity="1" />
+            <stop offset="100%" stopColor={g.color} stopOpacity="0" />
           </radialGradient>
         ))}
         <filter id="pf-glow" x="-60%" y="-60%" width="220%" height="220%">
@@ -240,7 +257,7 @@ export function FlowDiagram({ flow }: { flow: FlowSnapshot }) {
         );
       })}
 
-      {/* Travelling streaks (positioned by the rAF loop) */}
+      {/* Travelling streaks (transform/opacity/fill driven by the rAF loop) */}
       {streaks.map((s) => (
         <path
           key={s.key}
@@ -249,7 +266,6 @@ export function FlowDiagram({ flow }: { flow: FlowSnapshot }) {
           }}
           className="pf-streak"
           d={SPINDLE}
-          fill={`url(#${s.gradId})`}
           filter="url(#pf-glow)"
           style={{ opacity: 0 }}
         />
