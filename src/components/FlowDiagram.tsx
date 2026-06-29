@@ -48,11 +48,12 @@ function edgeFade(p: number): number {
   return 1;
 }
 
-interface StreakDef {
-  key: string;
-  legId: string;
-  gradId: string;
+/** Per-leg live "intent", read by the animation loop. */
+interface LegIntent {
+  id: string;
+  active: boolean;
   forward: boolean;
+  gradId: string;
 }
 
 function SourceLabel({
@@ -106,29 +107,27 @@ export function FlowDiagram({ flow }: { flow: FlowSnapshot }) {
     { id: "pf-home", d: "M160,320 L160,404", dim: SOURCE_DIM.home, flow: flow.homeW, gradId: homeGrad },
   ];
 
-  // One streak per active leg (no trains of lights). A leg with no flow has no
-  // streak — the intent "queue" is empty and nothing is shown.
-  const streaks: StreakDef[] = legs
-    .filter((leg) => Math.abs(leg.flow) >= ACTIVE_W)
-    .map((leg) => ({
-      key: leg.id,
-      legId: leg.id,
-      gradId: leg.gradId,
-      forward: leg.flow >= 0,
-    }));
+  // Live intent for every leg (a streak element exists for all four; the loop
+  // gates whether each is running). A trip in progress always finishes its line
+  // before going idle, even if the leg drops to zero mid-trip.
+  const intents: LegIntent[] = legs.map((leg) => ({
+    id: leg.id,
+    active: Math.abs(leg.flow) >= ACTIVE_W,
+    forward: leg.flow >= 0,
+    gradId: leg.gradId,
+  }));
 
   const conduitRefs = useRef<Record<string, SVGPathElement | null>>({});
   const streakRefs = useRef<Record<string, SVGPathElement | null>>({});
-  // The single pending intent per streak, read live by one persistent loop.
-  // Direction and colour are latched for the in-progress trip, so a mid-trip
-  // change never interrupts it — the streak finishes its line, then the next
-  // trip adopts the current direction/colour.
-  const streaksRef = useRef<StreakDef[]>(streaks);
+  // Single pending intent, read live by one persistent loop. Direction + colour
+  // are latched for the in-progress trip so a mid-trip change never interrupts
+  // it; the next trip adopts the current intent (or stops if no longer active).
+  const intentsRef = useRef<LegIntent[]>(intents);
   const progressRef = useRef<Map<string, number>>(new Map());
   const dirRef = useRef<Map<string, boolean>>(new Map());
   const gradRef = useRef<Map<string, string>>(new Map());
   useEffect(() => {
-    streaksRef.current = streaks;
+    intentsRef.current = intents;
   });
 
   // Single rAF loop for the component's lifetime — never torn down on updates.
@@ -143,45 +142,56 @@ export function FlowDiagram({ flow }: { flow: FlowSnapshot }) {
       const progress = progressRef.current;
       const dir = dirRef.current;
       const grad = gradRef.current;
-      const live = new Set<string>();
 
-      for (const s of streaksRef.current) {
-        live.add(s.key);
-        const streakEl = streakRefs.current[s.key];
-        const pathEl = conduitRefs.current[s.legId];
+      for (const it of intentsRef.current) {
+        const streakEl = streakRefs.current[it.id];
+        const pathEl = conduitRefs.current[it.id];
         if (!streakEl || !pathEl) continue;
-        let len = lengths[s.legId];
+        let len = lengths[it.id];
         if (!len) {
           try {
-            len = lengths[s.legId] = pathEl.getTotalLength();
+            len = lengths[it.id] = pathEl.getTotalLength();
           } catch {
             continue;
           }
         }
 
-        let p = progress.get(s.key);
+        let p = progress.get(it.id);
         if (p === undefined) {
-          // Start of a trip: latch direction + colour.
+          // Idle: start a trip only if the leg is currently flowing.
+          if (!it.active) {
+            streakEl.style.opacity = "0";
+            continue;
+          }
           p = 0;
-          dir.set(s.key, s.forward);
-          grad.set(s.key, s.gradId);
-          streakEl.setAttribute("fill", `url(#${s.gradId})`);
+          dir.set(it.id, it.forward);
+          grad.set(it.id, it.gradId);
+          streakEl.setAttribute("fill", `url(#${it.gradId})`);
         }
+
         // Constant pixels/second → uniform visual speed on every leg.
         p += (dt * SPEED_PX_PER_SEC) / len;
         if (p >= 1) {
+          if (!it.active) {
+            // Trip finished and the leg is no longer flowing → go idle now
+            // (rather than stopping mid-line when it dropped to zero).
+            progress.delete(it.id);
+            dir.delete(it.id);
+            grad.delete(it.id);
+            streakEl.style.opacity = "0";
+            continue;
+          }
+          // New trip: adopt the current direction/colour.
           p -= Math.floor(p);
-          // New trip: only now adopt any direction/colour change, so a streak
-          // always finishes the line it's on instead of switching mid-flight.
-          dir.set(s.key, s.forward);
-          if (grad.get(s.key) !== s.gradId) {
-            grad.set(s.key, s.gradId);
-            streakEl.setAttribute("fill", `url(#${s.gradId})`);
+          dir.set(it.id, it.forward);
+          if (grad.get(it.id) !== it.gradId) {
+            grad.set(it.id, it.gradId);
+            streakEl.setAttribute("fill", `url(#${it.gradId})`);
           }
         }
-        progress.set(s.key, p);
+        progress.set(it.id, p);
 
-        const forward = dir.get(s.key) ?? s.forward;
+        const forward = dir.get(it.id) ?? it.forward;
         const tp = forward ? p : 1 - p;
         const dist = tp * len;
         const pt = pathEl.getPointAtLength(dist);
@@ -193,14 +203,6 @@ export function FlowDiagram({ flow }: { flow: FlowSnapshot }) {
         );
         streakEl.style.opacity = edgeFade(p).toFixed(3);
       }
-
-      // Forget streaks that are no longer active so they restart cleanly later.
-      for (const k of progress.keys())
-        if (!live.has(k)) {
-          progress.delete(k);
-          dir.delete(k);
-          grad.delete(k);
-        }
 
       raf = requestAnimationFrame(tick);
     };
@@ -239,7 +241,7 @@ export function FlowDiagram({ flow }: { flow: FlowSnapshot }) {
         </linearGradient>
       </defs>
 
-      {/* Conduit guide lines */}
+      {/* Conduit guide lines + a streak element per leg (idle ones stay hidden) */}
       {legs.map((leg) => {
         const active = Math.abs(leg.flow) >= ACTIVE_W;
         return (
@@ -256,13 +258,11 @@ export function FlowDiagram({ flow }: { flow: FlowSnapshot }) {
           />
         );
       })}
-
-      {/* Travelling streaks (transform/opacity/fill driven by the rAF loop) */}
-      {streaks.map((s) => (
+      {legs.map((leg) => (
         <path
-          key={s.key}
+          key={leg.id}
           ref={(el) => {
-            streakRefs.current[s.key] = el;
+            streakRefs.current[leg.id] = el;
           }}
           className="pf-streak"
           d={SPINDLE}
