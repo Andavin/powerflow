@@ -79,7 +79,8 @@ export class MqttLiveSource implements LiveSource {
         [
           `${p}/${d}/power-flows/+`,
           `${p}/${d}/bess/+`,
-          `${p}/${d}/+/active_power`,
+          // Panel publishes circuit power hyphenated (active-power).
+          `${p}/${d}/+/active-power`,
           `${p}/${d}/+/relay`,
         ],
         { qos: 0 },

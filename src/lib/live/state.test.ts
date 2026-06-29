@@ -48,15 +48,15 @@ describe("applyMessage — bess", () => {
 });
 
 describe("applyMessage — circuits", () => {
-  it("negates a circuit's active_power into positive draw", () => {
+  it("negates a circuit's active-power into positive draw (hyphenated topic)", () => {
     const s = emptyLiveState();
-    apply(s, "ebus/5/nj-2338-00fq1/abc123/active_power", "-3965.5");
+    apply(s, "ebus/5/nj-2338-00fq1/abc123/active-power", "-3965.5");
     expect(s.circuitWatts.get("abc123")).toBe(3966);
   });
 
-  it("ignores active_power from system nodes (e.g. lugs)", () => {
+  it("ignores active-power from system nodes (e.g. lugs)", () => {
     const s = emptyLiveState();
-    expect(apply(s, "ebus/5/nj-2338-00fq1/lugs-upstream/active_power", "-50")).toBe(false);
+    expect(apply(s, "ebus/5/nj-2338-00fq1/lugs-upstream/active-power", "-50")).toBe(false);
     expect(s.circuitWatts.size).toBe(0);
   });
 
@@ -102,8 +102,8 @@ describe("buildSnapshot", () => {
     apply(s, "ebus/5/nj-2338-00fq1/power-flows/pv", "-2192");
     apply(s, "ebus/5/nj-2338-00fq1/power-flows/battery", "-3075");
     apply(s, "ebus/5/nj-2338-00fq1/bess/soc", "56");
-    apply(s, "ebus/5/nj-2338-00fq1/ev/active_power", "-3965");
-    apply(s, "ebus/5/nj-2338-00fq1/fridge/active_power", "-120");
+    apply(s, "ebus/5/nj-2338-00fq1/ev/active-power", "-3965");
+    apply(s, "ebus/5/nj-2338-00fq1/fridge/active-power", "-120");
     apply(s, "ebus/5/nj-2338-00fq1/fridge/relay", "OPEN");
 
     const meta = new Map([

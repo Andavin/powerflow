@@ -62,40 +62,40 @@ export function applyMessage(
   const property = rest.slice(slash + 1);
   // Skip Homie attribute topics ($name, $description, $target, …).
   if (!property || property.startsWith("$") || property.includes("/$")) return false;
+  // The panel publishes property names hyphenated (active-power, grid-state);
+  // normalise to the underscore keys the rest of the app uses.
+  const prop = property.replace(/-/g, "_");
 
   if (node === "power-flows") {
     const v = num(payload);
     if (v === null) return false;
-    state.flow[property] = v;
+    state.flow[prop] = v;
     return true;
   }
 
   if (node === "bess") {
-    // The panel publishes bess properties hyphenated (grid-state, vendor-name);
-    // normalise to the underscore keys the rest of the app uses.
-    const key = property.replace(/-/g, "_");
-    if (key === "connected") {
+    if (prop === "connected") {
       state.bess.connected = payload === "true" || payload === "1";
-    } else if (key === "soc" || key === "soe") {
+    } else if (prop === "soc" || prop === "soe") {
       const v = num(payload);
       if (v === null) return false;
-      state.bess[key] = v;
+      state.bess[prop] = v;
     } else {
-      state.bess[key] = payload;
+      state.bess[prop] = payload;
     }
     return true;
   }
 
   // Non-system nodes are circuits.
   if (!SYSTEM_NODES.has(node)) {
-    if (property === "active_power") {
+    if (prop === "active_power") {
       const v = num(payload);
       if (v === null) return false;
       // active_power is negative for consumption; negate to positive draw.
       state.circuitWatts.set(node, Math.round(-v));
       return true;
     }
-    if (property === "relay") {
+    if (prop === "relay") {
       state.circuitRelay.set(node, payload.toUpperCase());
       return true;
     }
