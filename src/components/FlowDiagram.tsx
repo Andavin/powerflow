@@ -21,13 +21,9 @@ const ACTIVE_W = 15;
 // conduit tangent at render time so it streaks along the direction of travel.
 const SPINDLE = "M-14 0 Q0 4.2 14 0 Q0 -4.2 -14 0 Z";
 
-// Higher = slower. The travel duration scales by this; ~70% of the old speed.
-const SPEED_SCALE = 1.43;
-
-/** Travel duration (seconds) for one trip along a conduit. */
-function streakDuration(magnitude: number): number {
-  return Math.max(1.15, 2.7 - magnitude / 3200) * SPEED_SCALE;
-}
+// Uniform visual speed (pixels/second) for every streak, regardless of leg or
+// power, so all the lights move at the same pace. Lower = calmer.
+const SPEED_PX_PER_SEC = 46;
 
 /**
  * Opacity along the trip: fades in at the source, full through the middle,
@@ -45,7 +41,6 @@ interface StreakDef {
   key: string;
   legId: string;
   gradId: string;
-  dur: number;
   forward: boolean;
 }
 
@@ -100,14 +95,14 @@ export function FlowDiagram({ flow }: { flow: FlowSnapshot }) {
     { id: "pf-home", d: "M160,320 L160,404", color: homeColor, dim: SOURCE_DIM.home, flow: flow.homeW },
   ];
 
-  // One streak per active leg (no trains of lights).
+  // One streak per active leg (no trains of lights). A leg with no flow has no
+  // streak — the "queue" is empty and nothing is shown.
   const streaks: StreakDef[] = legs
     .filter((leg) => Math.abs(leg.flow) >= ACTIVE_W)
     .map((leg) => ({
       key: leg.id,
       legId: leg.id,
       gradId: `${leg.id}-grad`,
-      dur: streakDuration(Math.abs(leg.flow)),
       forward: leg.flow >= 0,
     }));
 
@@ -118,6 +113,10 @@ export function FlowDiagram({ flow }: { flow: FlowSnapshot }) {
   // (from power changes / slowdown) apply smoothly.
   const streaksRef = useRef<StreakDef[]>(streaks);
   const progressRef = useRef<Map<string, number>>(new Map());
+  // Direction latched for the in-progress trip, so a mid-trip power reversal
+  // doesn't interrupt it — the streak finishes its line, then the next trip
+  // picks up the current direction.
+  const dirRef = useRef<Map<string, boolean>>(new Map());
   useEffect(() => {
     streaksRef.current = streaks;
   });
@@ -132,6 +131,7 @@ export function FlowDiagram({ flow }: { flow: FlowSnapshot }) {
       const dt = last === null ? 0 : (now - last) / 1000;
       last = now;
       const progress = progressRef.current;
+      const dir = dirRef.current;
       const live = new Set<string>();
 
       for (const s of streaksRef.current) {
@@ -148,12 +148,23 @@ export function FlowDiagram({ flow }: { flow: FlowSnapshot }) {
           }
         }
 
-        // Integrate progress so a changing duration smoothly changes speed.
-        let p = progress.get(s.key) ?? 0;
-        p = (p + dt / s.dur) % 1;
+        let p = progress.get(s.key);
+        if (p === undefined) {
+          p = 0;
+          dir.set(s.key, s.forward); // latch direction at the start of a trip
+        }
+        // Constant pixels/second → uniform visual speed on every leg.
+        p += (dt * SPEED_PX_PER_SEC) / len;
+        if (p >= 1) {
+          p -= Math.floor(p);
+          // New trip: only now adopt any direction change, so a streak always
+          // finishes the line it's on instead of reversing mid-flight.
+          dir.set(s.key, s.forward);
+        }
         progress.set(s.key, p);
 
-        const tp = s.forward ? p : 1 - p;
+        const forward = dir.get(s.key) ?? s.forward;
+        const tp = forward ? p : 1 - p;
         const dist = tp * len;
         const pt = pathEl.getPointAtLength(dist);
         const ahead = pathEl.getPointAtLength(Math.min(len, dist + 1.5));
@@ -166,7 +177,11 @@ export function FlowDiagram({ flow }: { flow: FlowSnapshot }) {
       }
 
       // Forget streaks that are no longer active so they restart cleanly later.
-      for (const k of progress.keys()) if (!live.has(k)) progress.delete(k);
+      for (const k of progress.keys())
+        if (!live.has(k)) {
+          progress.delete(k);
+          dir.delete(k);
+        }
 
       raf = requestAnimationFrame(tick);
     };
