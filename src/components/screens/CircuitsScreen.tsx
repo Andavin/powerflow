@@ -1,9 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { Segmented, Spinner, StatNumber, ErrorNote } from "@/components/primitives";
-import { useLiveStream } from "@/lib/client/data";
-import { splitPower } from "@/lib/format";
+import { useCircuitEnergy, useLiveStream } from "@/lib/client/data";
+import { splitPower, splitEnergy } from "@/lib/format";
 import type { Circuit } from "@/lib/types";
 
 type SortMode = "activity" | "panel" | "name";
@@ -28,6 +29,11 @@ function sortCircuits(circuits: Circuit[], mode: SortMode): Circuit[] {
 
 export function CircuitsScreen() {
   const { circuits: liveCircuits, connected, error } = useLiveStream();
+  const { data: energyData } = useCircuitEnergy("today");
+  const energyById = useMemo(
+    () => new Map((energyData?.circuits ?? []).map((c) => [c.id, c.kWh])),
+    [energyData],
+  );
   const [sort, setSort] = useState<SortMode>("activity");
   const [search, setSearch] = useState("");
 
@@ -65,25 +71,34 @@ export function CircuitsScreen() {
       <ul className="flex flex-col gap-2" aria-label="Circuit list">
         {circuits.map((c) => {
           const p = splitPower(c.watts);
+          const today = energyById.get(c.id);
+          const e = today != null ? splitEnergy(today) : null;
           return (
-            <li
-              key={c.id}
-              className="flex items-center gap-3 rounded-2xl border border-border bg-surface px-4 py-4"
-            >
-              <span className="min-w-0 flex-1">
-                <span className="block truncate font-medium">{c.name}</span>
-                {c.alwaysOn && <span className="text-xs text-faint">Always on</span>}
-              </span>
-              <span
-                className={`rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-                  c.isOn ? "bg-positive/15 text-positive" : "bg-surface-3 text-faint"
-                }`}
+            <li key={c.id}>
+              <Link
+                href={`/circuits/${encodeURIComponent(c.id)}`}
+                className="flex items-center gap-3 rounded-2xl border border-border bg-surface px-4 py-4 transition hover:border-battery/60 hover:bg-surface-2"
               >
-                {c.isOn ? "On" : "Off"}
-              </span>
-              <span className="w-20 text-right">
-                <StatNumber value={p.value} unit={p.unit} />
-              </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">{c.name}</span>
+                  {e ? (
+                    <span className="text-xs text-faint">{e.value} {e.unit} today</span>
+                  ) : (
+                    c.alwaysOn && <span className="text-xs text-faint">Always on</span>
+                  )}
+                </span>
+                <span
+                  className={`rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                    c.isOn ? "bg-positive/15 text-positive" : "bg-surface-3 text-faint"
+                  }`}
+                >
+                  {c.isOn ? "On" : "Off"}
+                </span>
+                <span className="w-20 text-right">
+                  <StatNumber value={p.value} unit={p.unit} />
+                </span>
+                <span className="text-faint">›</span>
+              </Link>
             </li>
           );
         })}

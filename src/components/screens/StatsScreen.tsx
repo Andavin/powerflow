@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 
 import { useState } from "react";
 import { Card, Segmented, Spinner, StatNumber, ErrorNote } from "@/components/primitives";
@@ -105,16 +106,21 @@ function HomeCircuitBreakdown({ range }: { range: StatRange }) {
         {circuits.slice(0, 8).map((c) => {
           const e = splitEnergy(c.kWh);
           return (
-            <li key={c.id} className="rounded-xl bg-surface-2 px-4 py-3">
-              <div className="flex items-center justify-between gap-3">
-                <span className="min-w-0 flex-1 truncate">{c.name}</span>
-                <StatNumber value={e.value} unit={e.unit} color={SOURCE_COLOR.home} />
-              </div>
-              <div className="mt-1 flex gap-3 text-[11px] text-muted">
-                <span style={{ color: SOURCE_COLOR.solar }}>☀ {formatPercent(c.mix.solar)}</span>
-                <span style={{ color: SOURCE_COLOR.battery }}>▮ {formatPercent(c.mix.battery)}</span>
-                <span style={{ color: SOURCE_COLOR.grid }}>⊞ {formatPercent(c.mix.grid)}</span>
-              </div>
+            <li key={c.id}>
+              <Link
+                href={`/circuits/${encodeURIComponent(c.id)}`}
+                className="block rounded-xl bg-surface-2 px-4 py-3 transition hover:bg-surface-3"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <span className="min-w-0 flex-1 truncate">{c.name}</span>
+                  <StatNumber value={e.value} unit={e.unit} color={SOURCE_COLOR.home} />
+                </div>
+                <div className="mt-1 flex gap-3 text-[11px] text-muted">
+                  <span style={{ color: SOURCE_COLOR.solar }}>☀ {formatPercent(c.mix.solar)}</span>
+                  <span style={{ color: SOURCE_COLOR.battery }}>▮ {formatPercent(c.mix.battery)}</span>
+                  <span style={{ color: SOURCE_COLOR.grid }}>⊞ {formatPercent(c.mix.grid)}</span>
+                </div>
+              </Link>
             </li>
           );
         })}

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { FlowDiagram } from "@/components/FlowDiagram";
 import { Sparkline } from "@/components/charts/Sparkline";
 import { StatsChart } from "@/components/charts/StatsChart";
@@ -97,12 +98,17 @@ function TopConsumers({ top }: { top: TopConsumer[] }) {
         {top.map((c) => {
           const p = splitPower(c.watts);
           return (
-            <li key={c.id} className="flex items-center gap-3 rounded-xl bg-surface-2 px-3 py-2.5">
-              <span className="min-w-0 flex-1 truncate text-sm">{c.name}</span>
-              <span className="text-xs" style={{ color: SOURCE_COLOR.home }}>
-                {formatPercent(c.share)}
-              </span>
-              <StatNumber value={p.value} unit={p.unit} className="w-16 text-right text-sm" />
+            <li key={c.id}>
+              <Link
+                href={`/circuits/${encodeURIComponent(c.id)}`}
+                className="flex items-center gap-3 rounded-xl bg-surface-2 px-3 py-2.5 transition hover:bg-surface-3"
+              >
+                <span className="min-w-0 flex-1 truncate text-sm">{c.name}</span>
+                <span className="text-xs" style={{ color: SOURCE_COLOR.home }}>
+                  {formatPercent(c.share)}
+                </span>
+                <StatNumber value={p.value} unit={p.unit} className="w-16 text-right text-sm" />
+              </Link>
             </li>
           );
         })}

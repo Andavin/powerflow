@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { FlowDiagram } from "@/components/FlowDiagram";
 import { Card, Spinner, StatNumber } from "@/components/primitives";
 import { useLiveStream } from "@/lib/client/data";
@@ -60,17 +61,19 @@ export function FlowScreen() {
             {top.map((c) => {
               const p = splitPower(c.watts);
               return (
-                <li
-                  key={c.id}
-                  className="flex items-center gap-3 rounded-xl bg-surface-2 px-4 py-3"
-                >
-                  <span className="min-w-0 flex-1 truncate">{c.name}</span>
-                  <span className="text-sm font-medium" style={{ color: SOURCE_COLOR.home }}>
-                    {formatPercent(c.share)}
-                  </span>
-                  <span className="w-20 text-right tabular-nums">
-                    <StatNumber value={p.value} unit={p.unit} />
-                  </span>
+                <li key={c.id}>
+                  <Link
+                    href={`/circuits/${encodeURIComponent(c.id)}`}
+                    className="flex items-center gap-3 rounded-xl bg-surface-2 px-4 py-3 transition hover:bg-surface-3"
+                  >
+                    <span className="min-w-0 flex-1 truncate">{c.name}</span>
+                    <span className="text-sm font-medium" style={{ color: SOURCE_COLOR.home }}>
+                      {formatPercent(c.share)}
+                    </span>
+                    <span className="w-20 text-right tabular-nums">
+                      <StatNumber value={p.value} unit={p.unit} />
+                    </span>
+                  </Link>
                 </li>
               );
             })}
