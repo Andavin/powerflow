@@ -54,3 +54,7 @@ package-lock.json
 
 # local dev certs (e.g. MQTT broker CA) — not committed
 /certs
+
+# crash core dumps
+core
+core.[0-9]*
