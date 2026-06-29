@@ -20,11 +20,13 @@ describe("splitPower", () => {
 });
 
 describe("splitKw", () => {
-  it("always formats kW with one decimal (no W switching)", () => {
+  it("formats kW (no W switching) and trims a trailing .0", () => {
     expect(splitKw(940)).toEqual({ value: "0.9", unit: "kW" });
-    expect(splitKw(7)).toEqual({ value: "0.0", unit: "kW" });
     expect(splitKw(5930)).toEqual({ value: "5.9", unit: "kW" });
-    expect(splitKw(12000)).toEqual({ value: "12.0", unit: "kW" });
+    // Trailing .0 dropped, like the panel app ("5" not "5.0").
+    expect(splitKw(7)).toEqual({ value: "0", unit: "kW" });
+    expect(splitKw(5000)).toEqual({ value: "5", unit: "kW" });
+    expect(splitKw(12000)).toEqual({ value: "12", unit: "kW" });
   });
 });
 
