@@ -58,8 +58,13 @@ export class MqttLiveSource implements LiveSource {
     const ca = this.opts.caFile ? [readFileSync(this.opts.caFile)] : undefined;
     // Pinned-CA LAN device: validate the chain against our CA but don't require
     // the cert hostname to match the broker IP.
+    // Unique per-instance client id (stable for this process's lifetime).
+    // Brokers allow one connection per client id, so a fixed id shared by two
+    // instances (e.g. a deploy + a dev server) makes them kick each other in a
+    // reconnect loop. The random suffix guarantees they never collide.
+    const clientId = `${this.opts.clientId}-${Math.random().toString(36).slice(2, 8)}`;
     const options = {
-      clientId: this.opts.clientId,
+      clientId,
       username: this.opts.username,
       password: this.opts.password,
       reconnectPeriod: 5000,
@@ -74,7 +79,7 @@ export class MqttLiveSource implements LiveSource {
     const { topicPrefix: p, deviceId: d } = this.opts;
 
     client.on("connect", () => {
-      this.log("info", "MQTT connected", { url: this.opts.url });
+      this.log("info", "MQTT connected", { url: this.opts.url, clientId });
       client.subscribe(
         [
           `${p}/${d}/power-flows/+`,
