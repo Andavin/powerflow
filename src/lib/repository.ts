@@ -20,6 +20,7 @@ import {
   socSeriesSql,
 } from "./sql";
 import {
+  batteryPercent,
   circuitEnergyFromRows,
   circuitSeriesFromRows,
   homeSourceMix,
@@ -117,7 +118,10 @@ export class QuestDbRepository implements Repository {
   async getSocSeries(window: TimeWindow): Promise<SocPoint[]> {
     const device = await this.device();
     const rows = await this.client.query(socSeriesSql(window, this.timezone, device));
-    return rows.map((r) => ({ ts: String(r.ts), soc: num(r.soc) }));
+    return rows.map((r) => ({
+      ts: String(r.ts),
+      soc: batteryPercent(num(r.soe), num(r.soc)),
+    }));
   }
 
   async getCircuitEnergy(window: TimeWindow): Promise<CircuitEnergy[]> {

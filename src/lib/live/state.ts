@@ -125,6 +125,7 @@ export function buildSnapshot(
     },
     {
       soc: state.bess.soc,
+      soe: state.bess.soe,
       grid_state: state.bess.grid_state,
       connected: state.bess.connected,
     },

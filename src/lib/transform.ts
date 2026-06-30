@@ -28,6 +28,30 @@ function str(value: unknown): string | null {
 }
 
 /**
+ * Tesla Powerwall 3 usable energy capacity (kWh). The SPAN app shows the
+ * battery percentage as state-of-energy against this usable figure, which is
+ * why its number is higher than the panel's raw `bess/soc` field: that `soc`
+ * is a non-linear cell metric measured against the larger full pack (~16 kWh
+ * at low charge), whereas soe/usable matches SPAN at both ends of the range
+ * (100% at full, and e.g. 3.0 kWh / 13.5 = 22% — what SPAN displays).
+ */
+export const BATTERY_USABLE_KWH = 13.5;
+
+/**
+ * Battery percentage the SPAN way: state-of-energy over usable capacity.
+ * Falls back to the raw `soc` field when soe is unavailable.
+ */
+export function batteryPercent(
+  soe: number | null,
+  socFallback: number | null,
+): number | null {
+  if (soe !== null && BATTERY_USABLE_KWH > 0) {
+    return Math.max(0, Math.min(100, Math.round((soe / BATTERY_USABLE_KWH) * 100)));
+  }
+  return socFallback !== null ? Math.round(socFallback) : null;
+}
+
+/**
  * Normalise a raw `power_flows` row (+ optional battery row) into the signed
  * domain snapshot. Raw convention: negative pv/grid/battery = supplying home.
  *   solarW = -pv (>=0), gridW = -grid (+import), batteryW = -battery (+discharge)
@@ -43,7 +67,10 @@ export function toFlowSnapshot(flow: Row, battery?: Row | null): FlowSnapshot {
     solarW: Math.max(0, Math.round(-pv)),
     gridW: Math.round(-grid),
     batteryW: Math.round(-bat),
-    batterySoc: battery ? num(battery.soc) : null,
+    batterySoc: batteryPercent(
+      battery ? num(battery.soe) : null,
+      battery ? num(battery.soc) : null,
+    ),
     gridState: battery ? str(battery.grid_state) : null,
     batteryConnected:
       battery && battery.connected !== undefined

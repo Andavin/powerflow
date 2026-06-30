@@ -92,7 +92,7 @@ export function socSeriesSql(
   const w = where([deviceEq(deviceId), timeRange(window)]);
   const unit = sampleByUnit(window.bucket);
   return (
-    `SELECT ts, avg(soc) soc FROM panel_bess ${w} ` +
+    `SELECT ts, avg(soc) soc, avg(soe) soe FROM panel_bess ${w} ` +
     `SAMPLE BY ${unit} FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE '${escapeLiteral(tz)}'`
   );
 }

@@ -92,6 +92,7 @@ describe("socSeriesSql", () => {
   it("reads soc from panel_bess with linear fill", () => {
     const sql = socSeriesSql(WINDOW, TZ, "dev1");
     expect(sql).toContain("avg(soc)");
+    expect(sql).toContain("avg(soe)");
     expect(sql).toContain("panel_bess");
     expect(sql).toContain("FILL(LINEAR)");
   });

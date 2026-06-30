@@ -47,13 +47,14 @@ describe("QuestDbRepository", () => {
     const { client } = fakeClient([
       [/FROM power_flows LATEST ON/, [{ device_id: "d" }]],
       [/site, grid, pv, battery/, [{ ts: "2026-06-28T02:10:00Z", site: 5274, grid: -7, pv: -2192, battery: -3075 }]],
-      [/panel_bess/, [{ ts: "x", soc: 56, soe: 8, grid_state: "ON_GRID", connected: true }]],
+      [/panel_bess/, [{ ts: "x", soc: 56, soe: 8.1, grid_state: "ON_GRID", connected: true }]],
     ]);
     const repo = new QuestDbRepository(client, { deviceId: "d", timezone: TZ });
     const snap = await repo.getFlow();
     expect(snap.solarW).toBe(2192);
     expect(snap.batteryW).toBe(3075);
-    expect(snap.batterySoc).toBe(56);
+    // Battery % is soe / usable (8.1 / 13.5 = 60%), the SPAN convention.
+    expect(snap.batterySoc).toBe(60);
   });
 
   it("getEnergySeries integrates flow rows for the source", async () => {

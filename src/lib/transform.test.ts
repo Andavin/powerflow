@@ -38,6 +38,23 @@ describe("toFlowSnapshot", () => {
     expect(snap.gridState).toBe("ON_GRID");
   });
 
+  it("derives battery % from state-of-energy the SPAN way (soe / usable)", () => {
+    // Real reading: soe=3.0 kWh maps to 22% (SPAN), not the raw soc field (18.4).
+    const snap = toFlowSnapshot(
+      { site: 0, grid: 0, pv: 0, battery: 0 },
+      { soc: 18.4, soe: 3.0, grid_state: "ON_GRID", connected: true },
+    );
+    expect(snap.batterySoc).toBe(22);
+  });
+
+  it("falls back to the raw soc field when soe is absent", () => {
+    const snap = toFlowSnapshot(
+      { site: 0, grid: 0, pv: 0, battery: 0 },
+      { soc: 56, grid_state: "ON_GRID", connected: true },
+    );
+    expect(snap.batterySoc).toBe(56);
+  });
+
   it("preserves the invariant home = solar + grid + battery", () => {
     const snap = toFlowSnapshot({
       site: 5274,
