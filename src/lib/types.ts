@@ -34,6 +34,12 @@ export interface Circuit {
   breakerRating: number | null;
   sheddable: boolean;
   alwaysOn: boolean;
+  /**
+   * Whether the app may toggle this circuit's relay. SPAN-authoritative and
+   * default-deny: true only when the panel marks the relay settable AND the
+   * circuit is not always-on. Never reflects the app's own control flag.
+   */
+  controllable: boolean;
 }
 
 export interface TopConsumer {

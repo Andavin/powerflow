@@ -92,6 +92,7 @@ describe("buildSnapshot", () => {
     breakerRating: null,
     sheddable: false,
     alwaysOn: false,
+    controllable: false,
     ...over,
   });
 
@@ -131,5 +132,36 @@ describe("buildSnapshot", () => {
     const snap = buildSnapshot(s, new Map());
     expect(snap.top[0].name).toBe("xyz");
     expect(snap.circuits[0].id).toBe("xyz");
+  });
+
+  it("derives controllable default-deny from SPAN settable + always-on", () => {
+    const s = emptyLiveState();
+    // Flow so the snapshot is well-formed.
+    for (const [ch, v] of [["site", "1"], ["grid", "1"], ["pv", "0"], ["battery", "0"]]) {
+      apply(s, `ebus/5/nj-2338-00fq1/power-flows/${ch}`, v);
+    }
+    apply(s, "ebus/5/nj-2338-00fq1/ev/active-power", "-10");
+    apply(s, "ebus/5/nj-2338-00fq1/fridge/active-power", "-10");
+    apply(s, "ebus/5/nj-2338-00fq1/unknownc/active-power", "-10");
+    // SPAN description: ev settable+not-always-on, fridge settable but always-on.
+    const desc = JSON.stringify({
+      nodes: {
+        core: { properties: { relay: { settable: false } } },
+        ev: { properties: { relay: { settable: true } } },
+        fridge: { properties: { relay: { settable: true } } },
+      },
+    });
+    expect(apply(s, "ebus/5/nj-2338-00fq1/$description", desc)).toBe(true);
+
+    const meta = new Map([
+      ["ev", circuitMeta({ id: "ev", name: "EV" })],
+      ["fridge", circuitMeta({ id: "fridge", name: "Fridge", alwaysOn: true })],
+      ["unknownc", circuitMeta({ id: "unknownc", name: "Mystery" })],
+    ]);
+    const snap = buildSnapshot(s, meta, Date.parse("2026-06-28T02:10:00Z"));
+    const by = (id: string) => snap.circuits.find((c) => c.id === id)!;
+    expect(by("ev").controllable).toBe(true); // settable + not always-on
+    expect(by("fridge").controllable).toBe(false); // always-on wins
+    expect(by("unknownc").controllable).toBe(false); // no settable info → deny
   });
 });

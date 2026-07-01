@@ -26,6 +26,11 @@ export interface PowerflowConfig {
   authDisabled: boolean;
   password: string;
   sessionSecret: string;
+  /**
+   * Master switch for breaker control. Default OFF: the publish route is
+   * disabled and the UI shows read-only unless this is explicitly enabled.
+   */
+  controlEnabled: boolean;
   mqtt: MqttConfig;
 }
 
@@ -46,6 +51,7 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): PowerflowConfi
     authDisabled: bool(env.POWERFLOW_AUTH_DISABLED, false),
     password: env.POWERFLOW_PASSWORD ?? "",
     sessionSecret: env.POWERFLOW_SESSION_SECRET ?? "",
+    controlEnabled: bool(env.POWERFLOW_CONTROL_ENABLED, false),
     mqtt: {
       url: env.POWERFLOW_MQTT_URL?.trim() ?? "",
       username: env.POWERFLOW_MQTT_USERNAME ?? "",

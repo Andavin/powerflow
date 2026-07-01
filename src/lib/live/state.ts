@@ -30,10 +30,47 @@ export interface LiveState {
   circuitWatts: Map<string, number>;
   /** circuitId → relay state (e.g. CLOSED/OPEN), upper-cased. */
   circuitRelay: Map<string, string>;
+  /**
+   * circuitId → whether SPAN marks the relay settable (from the Homie
+   * `$description`). Authoritative source for whether control is even allowed.
+   */
+  circuitSettable: Map<string, boolean>;
 }
 
 export function emptyLiveState(): LiveState {
-  return { flow: {}, bess: {}, circuitWatts: new Map(), circuitRelay: new Map() };
+  return {
+    flow: {},
+    bess: {},
+    circuitWatts: new Map(),
+    circuitRelay: new Map(),
+    circuitSettable: new Map(),
+  };
+}
+
+/**
+ * Fold the panel's Homie `$description` (a JSON document) into state, recording
+ * which circuit relays SPAN marks settable. System nodes (core, bess, …) are
+ * ignored. Returns true if anything was recorded.
+ */
+export function applyDescription(state: LiveState, payload: string): boolean {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(payload);
+  } catch {
+    return false;
+  }
+  const nodes = (doc as { nodes?: Record<string, unknown> })?.nodes;
+  if (!nodes || typeof nodes !== "object") return false;
+  let changed = false;
+  for (const [nodeId, node] of Object.entries(nodes)) {
+    if (SYSTEM_NODES.has(nodeId)) continue;
+    const relay = (node as { properties?: Record<string, { settable?: unknown }> })
+      ?.properties?.relay;
+    if (!relay) continue;
+    state.circuitSettable.set(nodeId, relay.settable === true);
+    changed = true;
+  }
+  return changed;
 }
 
 /** True once all four flow channels have been seen (avoids a partial frame). */
@@ -56,6 +93,8 @@ export function applyMessage(
   const base = `${prefix}/${deviceId}/`;
   if (!topic.startsWith(base)) return false;
   const rest = topic.slice(base.length);
+  // The device-level description carries per-circuit settable flags.
+  if (rest === "$description") return applyDescription(state, payload);
   const slash = rest.indexOf("/");
   if (slash < 0) return false;
   const node = rest.slice(0, slash);
@@ -136,6 +175,10 @@ export function buildSnapshot(
     .map((id) => {
       const m = meta.get(id);
       const relayState = (state.circuitRelay.get(id) ?? m?.relayState ?? "CLOSED").toUpperCase();
+      const alwaysOn = m?.alwaysOn ?? false;
+      // SPAN-authoritative, default-deny: controllable only when the panel
+      // marks the relay settable AND the circuit is not always-on.
+      const settable = state.circuitSettable.get(id) ?? false;
       return {
         id,
         name: m?.name ?? id,
@@ -145,7 +188,8 @@ export function buildSnapshot(
         space: m?.space ?? null,
         breakerRating: m?.breakerRating ?? null,
         sheddable: m?.sheddable ?? false,
-        alwaysOn: m?.alwaysOn ?? false,
+        alwaysOn,
+        controllable: settable && !alwaysOn,
       };
     })
     .sort((a, b) => b.watts - a.watts);

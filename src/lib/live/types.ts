@@ -20,6 +20,12 @@ export interface LiveSource {
   current(): LiveSnapshot | null;
   /** Subscribe to coalesced updates; returns an unsubscribe function. */
   subscribe(listener: (snapshot: LiveSnapshot) => void): () => void;
+  /**
+   * Command a circuit relay OPEN (off) / CLOSED (on) by publishing to the
+   * panel. Optional: only the live MQTT source implements it. Resolves once the
+   * command is published; the panel echoes the resulting state on its own.
+   */
+  setRelay?(circuitId: string, desired: "OPEN" | "CLOSED"): Promise<void>;
 }
 
 /** Loads circuit metadata (id → Circuit) from QuestDB, looked up rarely. */

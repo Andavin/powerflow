@@ -115,7 +115,7 @@ describe("topConsumers", () => {
     { id: "b", name: "Bed", watts: 396 },
     { id: "c", name: "Off", watts: 0 },
     { id: "d", name: "Neg", watts: -5 },
-  ].map((c) => ({ ...c, relayState: "CLOSED", isOn: true, space: null, breakerRating: null, sheddable: false, alwaysOn: false }));
+  ].map((c) => ({ ...c, relayState: "CLOSED", isOn: true, space: null, breakerRating: null, sheddable: false, alwaysOn: false, controllable: true }));
 
   it("ranks by draw, ignores zero/negative, computes share", () => {
     const top = topConsumers(circuits, 5);

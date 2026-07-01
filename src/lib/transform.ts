@@ -106,6 +106,10 @@ export function toCircuit(row: Row): Circuit {
     breakerRating: num(row.breaker_rating),
     sheddable: Boolean(row.sheddable),
     alwaysOn: Boolean(row.always_on),
+    // Default-deny: QuestDB metadata can't confirm the relay is settable, so
+    // the authoritative value is set from the live MQTT $description in
+    // buildSnapshot. Absent that, control stays disabled.
+    controllable: false,
   };
 }
 

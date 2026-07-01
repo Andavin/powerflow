@@ -87,6 +87,8 @@ export class MqttLiveSource implements LiveSource {
           // Panel publishes circuit power hyphenated (active-power).
           `${p}/${d}/+/active-power`,
           `${p}/${d}/+/relay`,
+          // Device description carries per-circuit settable flags (for control).
+          `${p}/${d}/$description`,
         ],
         { qos: 0 },
         (err) => err && this.log("error", "MQTT subscribe failed", err.message),
@@ -137,5 +139,31 @@ export class MqttLiveSource implements LiveSource {
   subscribe(listener: (s: LiveSnapshot) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /**
+   * Publish a relay command to the panel via Homie's `<node>/<prop>/set` topic.
+   * Guardrails (control enabled, auth, controllability) are enforced upstream in
+   * the API route; this only speaks to the broker. The panel echoes the new
+   * relay state on its own topic, which flows back through the normal snapshot.
+   */
+  setRelay(circuitId: string, desired: "OPEN" | "CLOSED"): Promise<void> {
+    const client = this.client;
+    if (!client || !client.connected) {
+      return Promise.reject(new Error("MQTT not connected"));
+    }
+    const { topicPrefix: p, deviceId: d } = this.opts;
+    const topic = `${p}/${d}/${circuitId}/relay/set`;
+    return new Promise((resolve, reject) => {
+      client.publish(topic, desired, { qos: 1 }, (err) => {
+        if (err) {
+          this.log("error", "relay publish failed", { topic, err: err.message });
+          reject(err);
+        } else {
+          this.log("info", "relay command published", { topic, desired });
+          resolve();
+        }
+      });
+    });
   }
 }

@@ -98,6 +98,7 @@ export class MockRepository implements Repository {
       breakerRating: watts > 1000 ? 50 : 20,
       sheddable: i > 2,
       alwaysOn: id === "fridge",
+      controllable: id !== "fridge",
     })).sort((a, b) => b.watts - a.watts);
   }
 
