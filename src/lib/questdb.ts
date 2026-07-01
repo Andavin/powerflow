@@ -1,4 +1,5 @@
-import type { Row } from "./transform";
+/** A QuestDB row decoded into a column-keyed object. */
+export type Row = Record<string, unknown>;
 
 /**
  * Minimal QuestDB HTTP client.
@@ -26,7 +27,6 @@ export class QuestDbError extends Error {
 
 export interface QuestDbClient {
   query(sql: string): Promise<Row[]>;
-  queryRaw(sql: string): Promise<QuestDbResponse>;
 }
 
 export function createQuestDbClient(
@@ -81,7 +81,7 @@ export function createQuestDbClient(
     return decodeRows(body);
   }
 
-  return { query, queryRaw };
+  return { query };
 }
 
 /** Decode QuestDB's columnar `{columns, dataset}` into row objects. */

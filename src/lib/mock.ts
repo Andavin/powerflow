@@ -9,7 +9,7 @@ import type {
 } from "./types";
 import type { TimeWindow } from "./time";
 import type { Repository, SocPoint } from "./repository";
-import { assembleEnergySeries, topConsumers } from "./transform";
+import { assembleEnergySeries } from "./transform";
 
 /**
  * Deterministic in-memory repository.
@@ -216,5 +216,3 @@ function bucketStarts(window: TimeWindow): number[] {
 function round3(n: number): number {
   return Math.round(n * 1000) / 1000;
 }
-
-export const _internals = { topConsumers, REF_NOW };

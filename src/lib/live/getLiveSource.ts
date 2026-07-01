@@ -51,8 +51,3 @@ export function getLiveSource(): LiveSource {
   cached.ensureStarted();
   return cached;
 }
-
-/** Test helper. */
-export function resetLiveSourceCache(): void {
-  cached = null;
-}

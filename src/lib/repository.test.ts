@@ -24,9 +24,6 @@ function fakeClient(handlers: Array<[RegExp, Row[]]>): {
       for (const [re, rows] of handlers) if (re.test(sql)) return rows;
       return [];
     },
-    async queryRaw() {
-      throw new Error("not used");
-    },
   };
   return { client, queries };
 }
@@ -56,9 +53,6 @@ describe("QuestDbRepository", () => {
           return [{ ts: "x", site: 1, grid: 0, pv: 0, battery: 0 }];
         }
         return [];
-      },
-      async queryRaw() {
-        throw new Error("not used");
       },
     };
     const repo = new QuestDbRepository(client, { timezone: TZ });

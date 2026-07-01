@@ -71,8 +71,3 @@ export function config(): PowerflowConfig {
   if (!cached) cached = readConfig();
   return cached;
 }
-
-/** Test helper to reset the memoised config. */
-export function resetConfigCache(): void {
-  cached = null;
-}

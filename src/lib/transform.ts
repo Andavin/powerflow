@@ -9,9 +9,11 @@ import type {
   TopConsumer,
 } from "./types";
 import type { TimeWindow } from "./time";
+import type { Row } from "./questdb";
 
-/** A QuestDB row decoded into a column-keyed object. */
-export type Row = Record<string, unknown>;
+// Re-exported for existing importers; the canonical definition lives in questdb.ts
+// so the low-level client no longer depends on this domain module.
+export type { Row };
 
 export function num(value: unknown): number | null {
   if (value === null || value === undefined) return null;

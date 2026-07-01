@@ -20,8 +20,3 @@ export function getRepository(): Repository {
   }
   return cached;
 }
-
-/** Test helper. */
-export function resetRepositoryCache(): void {
-  cached = null;
-}
