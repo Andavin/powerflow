@@ -165,6 +165,37 @@ export function integrate(avgW: number, hours: number): number {
 }
 
 /**
+ * Assemble the EnergySeries envelope from accumulated per-bucket sums. Shared by
+ * the live transform and the mock repository so the totals shape (per-source
+ * charged/discharged or imported/exported) lives in one place.
+ */
+export function assembleEnergySeries(
+  source: StatSource,
+  window: TimeWindow,
+  points: EnergyPoint[],
+  sums: { total: number; charged?: number; discharged?: number; imported?: number; exported?: number },
+): EnergySeries {
+  const totals: EnergySeries["totals"] = { kWh: round3(sums.total) };
+  if (source === "battery") {
+    totals.chargedKWh = round3(sums.charged ?? 0);
+    totals.dischargedKWh = round3(sums.discharged ?? 0);
+  }
+  if (source === "grid") {
+    totals.importedKWh = round3(sums.imported ?? 0);
+    totals.exportedKWh = round3(sums.exported ?? 0);
+  }
+  return {
+    source,
+    range: "custom",
+    bucket: window.bucket,
+    from: window.from,
+    to: window.to,
+    points,
+    totals,
+  };
+}
+
+/**
  * Build an energy series for one source from `flowSeriesSql` rows.
  * Energy is the time integral of (sign-normalised) average power per bucket.
  */
@@ -217,25 +248,7 @@ export function seriesFromFlowRows(
     return point;
   });
 
-  const totals: EnergySeries["totals"] = { kWh: round3(total) };
-  if (source === "battery") {
-    totals.chargedKWh = round3(charged);
-    totals.dischargedKWh = round3(discharged);
-  }
-  if (source === "grid") {
-    totals.importedKWh = round3(imported);
-    totals.exportedKWh = round3(exported);
-  }
-
-  return {
-    source,
-    range: "custom",
-    bucket: window.bucket,
-    from: window.from,
-    to: window.to,
-    points,
-    totals,
-  };
+  return assembleEnergySeries(source, window, points, { total, charged, discharged, imported, exported });
 }
 
 /**
@@ -274,15 +287,7 @@ export function circuitSeriesFromRows(rows: Row[], window: TimeWindow): EnergySe
     total += kWh;
     return { ts: str(r.ts)!, kWh };
   });
-  return {
-    source: "home",
-    range: "custom",
-    bucket: window.bucket,
-    from: window.from,
-    to: window.to,
-    points,
-    totals: { kWh: round3(total) },
-  };
+  return assembleEnergySeries("home", window, points, { total });
 }
 
 /**

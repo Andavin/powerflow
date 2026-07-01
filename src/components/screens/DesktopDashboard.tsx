@@ -7,6 +7,7 @@ import { StatsChart } from "@/components/charts/StatsChart";
 import { Card, Spinner, StatNumber } from "@/components/primitives";
 import { SOURCE_ICON } from "@/components/icons";
 import { useLiveStream, useStats } from "@/lib/client/data";
+import { sourceMetrics, type SourceMetric } from "@/lib/energy";
 import { SOURCE_COLOR, SOURCE_LABEL } from "@/lib/palette";
 import { splitEnergy, splitPower, formatPercent } from "@/lib/format";
 import type { EnergySeries, StatSource, TopConsumer } from "@/lib/types";
@@ -19,25 +20,14 @@ interface Metric {
 
 /**
  * Today's energy for a card. Bidirectional sources (battery, grid) return two
- * labelled values; solar/home return one.
+ * labelled values; solar/home return one. Battery leads with charged, grid with
+ * imported (the primary), so the ordering is source-specific.
  */
 function cardMetrics(series: EnergySeries): Metric[] {
-  const t = series.totals;
-  if (series.source === "battery") {
-    return [
-      { ...splitEnergy(t.chargedKWh ?? 0), label: "charged" },
-      { ...splitEnergy(t.dischargedKWh ?? 0), label: "discharged" },
-    ];
-  }
-  if (series.source === "grid") {
-    return [
-      { ...splitEnergy(t.importedKWh ?? 0), label: "imported" },
-      { ...splitEnergy(t.exportedKWh ?? 0), label: "exported" },
-    ];
-  }
-  return [
-    { ...splitEnergy(t.kWh), label: series.source === "solar" ? "generated" : "consumed" },
-  ];
+  const { primary, secondary } = sourceMetrics(series);
+  const m = (x: SourceMetric): Metric => ({ ...splitEnergy(x.kWh), label: x.label.toLowerCase() });
+  if (!secondary) return [m(primary)];
+  return series.source === "battery" ? [m(secondary), m(primary)] : [m(primary), m(secondary)];
 }
 
 function SourceStatCard({ source }: { source: StatSource }) {

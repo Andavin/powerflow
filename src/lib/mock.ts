@@ -9,7 +9,7 @@ import type {
 } from "./types";
 import type { TimeWindow } from "./time";
 import type { Repository, SocPoint } from "./repository";
-import { topConsumers } from "./transform";
+import { assembleEnergySeries, topConsumers } from "./transform";
 
 /**
  * Deterministic in-memory repository.
@@ -157,24 +157,7 @@ export class MockRepository implements Repository {
       return point;
     });
 
-    const totals: EnergySeries["totals"] = { kWh: round3(total) };
-    if (source === "battery") {
-      totals.chargedKWh = round3(charged);
-      totals.dischargedKWh = round3(discharged);
-    }
-    if (source === "grid") {
-      totals.importedKWh = round3(imported);
-      totals.exportedKWh = round3(exported);
-    }
-    return {
-      source,
-      range: "custom",
-      bucket: window.bucket,
-      from: window.from,
-      to: window.to,
-      points,
-      totals,
-    };
+    return assembleEnergySeries(source, window, points, { total, charged, discharged, imported, exported });
   }
 
   async getSocSeries(window: TimeWindow): Promise<SocPoint[]> {
@@ -211,15 +194,7 @@ export class MockRepository implements Repository {
       total += kWh;
       return { ts: new Date(ms).toISOString(), kWh };
     });
-    return {
-      source: "home",
-      range: "custom",
-      bucket: window.bucket,
-      from: window.from,
-      to: window.to,
-      points,
-      totals: { kWh: round3(total) },
-    };
+    return assembleEnergySeries("home", window, points, { total });
   }
 }
 

@@ -13,19 +13,12 @@ import {
 import { SOURCE_ICON } from "@/components/icons";
 import { useStats, useCircuitEnergy } from "@/lib/client/data";
 import type { Window } from "@/lib/period";
+import { headlineKWh, sourceMetrics } from "@/lib/energy";
 import { SOURCE_COLOR, SOURCE_LABEL } from "@/lib/palette";
 import { splitEnergy, formatPercent } from "@/lib/format";
 import type { EnergySeries, StatSource } from "@/lib/types";
 
 const SOURCES: StatSource[] = ["home", "solar", "battery", "grid"];
-
-/** The headline kWh for a source (what the change % compares). */
-function headlineKWh(series?: EnergySeries): number {
-  if (!series) return 0;
-  if (series.source === "battery") return series.totals.dischargedKWh ?? 0;
-  if (series.source === "grid") return series.totals.importedKWh ?? 0;
-  return series.totals.kWh;
-}
 
 function SourceTabs({
   source,
@@ -61,45 +54,27 @@ function SourceTabs({
 
 function Totals({ series }: { series: EnergySeries }) {
   const color = SOURCE_COLOR[series.source];
-  if (series.source === "battery") {
-    const d = splitEnergy(series.totals.dischargedKWh ?? 0);
-    const c = splitEnergy(series.totals.chargedKWh ?? 0);
+  const { primary, secondary } = sourceMetrics(series);
+  const p = splitEnergy(primary.kWh);
+  if (secondary) {
+    const s = splitEnergy(secondary.kWh);
     return (
       <div className="flex gap-8">
         <div>
-          <StatNumber value={d.value} unit={d.unit} color={color} className="text-3xl" />
-          <div className="text-xs text-muted">Discharged</div>
+          <StatNumber value={p.value} unit={p.unit} color={color} className="text-3xl" />
+          <div className="text-xs text-muted">{primary.label}</div>
         </div>
         <div>
-          <StatNumber value={c.value} unit={c.unit} className="text-3xl" />
-          <div className="text-xs text-muted">Charged</div>
+          <StatNumber value={s.value} unit={s.unit} className="text-3xl" />
+          <div className="text-xs text-muted">{secondary.label}</div>
         </div>
       </div>
     );
   }
-  if (series.source === "grid") {
-    const imp = splitEnergy(series.totals.importedKWh ?? 0);
-    const exp = splitEnergy(series.totals.exportedKWh ?? 0);
-    return (
-      <div className="flex gap-8">
-        <div>
-          <StatNumber value={imp.value} unit={imp.unit} color={color} className="text-3xl" />
-          <div className="text-xs text-muted">Imported</div>
-        </div>
-        <div>
-          <StatNumber value={exp.value} unit={exp.unit} className="text-3xl" />
-          <div className="text-xs text-muted">Exported</div>
-        </div>
-      </div>
-    );
-  }
-  const t = splitEnergy(series.totals.kWh);
   return (
     <div>
-      <StatNumber value={t.value} unit={t.unit} color={color} className="text-4xl" />
-      <div className="text-xs text-muted">
-        {series.source === "solar" ? "Generated" : "Consumed"}
-      </div>
+      <StatNumber value={p.value} unit={p.unit} color={color} className="text-4xl" />
+      <div className="text-xs text-muted">{primary.label}</div>
     </div>
   );
 }

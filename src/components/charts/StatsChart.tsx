@@ -81,6 +81,11 @@ function buildData(
 const COMPARE_FILL = "#ffffff";
 const COMPARE_OPACITY = 0.4;
 const DOWN_OPACITY = 0.55;
+/** Faint white wash behind the hovered bucket. */
+const HOVER_FILL = "#ffffff08";
+const MAX_BAR_SIZE = 22;
+const BAR_RADIUS_TOP: [number, number, number, number] = [3, 3, 0, 0];
+const BAR_RADIUS_BOTTOM: [number, number, number, number] = [0, 0, 3, 3];
 /** Below this many buckets we mark the SOC line with dots (the daily look). */
 const SOC_DOT_LIMIT = 40;
 
@@ -164,7 +169,7 @@ function BandCursor(props: any) {
       y={top}
       width={band}
       height={height}
-      fill="#ffffff08"
+      fill={HOVER_FILL}
       pointerEvents="none"
     />
   );
@@ -229,12 +234,12 @@ export function StatsChart({
           />
           {compare && (
             <>
-              <Bar dataKey="cmpPos" stackId="prev" fill={COMPARE_FILL} fillOpacity={COMPARE_OPACITY} radius={[3, 3, 0, 0]} maxBarSize={22} />
-              <Bar dataKey="cmpNeg" stackId="prev" fill={COMPARE_FILL} fillOpacity={COMPARE_OPACITY * 0.6} radius={[0, 0, 3, 3]} maxBarSize={22} />
+              <Bar dataKey="cmpPos" stackId="prev" fill={COMPARE_FILL} fillOpacity={COMPARE_OPACITY} radius={BAR_RADIUS_TOP} maxBarSize={MAX_BAR_SIZE} />
+              <Bar dataKey="cmpNeg" stackId="prev" fill={COMPARE_FILL} fillOpacity={COMPARE_OPACITY * 0.6} radius={BAR_RADIUS_BOTTOM} maxBarSize={MAX_BAR_SIZE} />
             </>
           )}
-          <Bar dataKey="pos" stackId="cur" fill={color} radius={[3, 3, 0, 0]} maxBarSize={22} />
-          <Bar dataKey="neg" stackId="cur" fill={color} fillOpacity={DOWN_OPACITY} radius={[0, 0, 3, 3]} maxBarSize={22} />
+          <Bar dataKey="pos" stackId="cur" fill={color} radius={BAR_RADIUS_TOP} maxBarSize={MAX_BAR_SIZE} />
+          <Bar dataKey="neg" stackId="cur" fill={color} fillOpacity={DOWN_OPACITY} radius={BAR_RADIUS_BOTTOM} maxBarSize={MAX_BAR_SIZE} />
           {hasSoc && (
             <Line
               yAxisId="soc"
@@ -262,14 +267,14 @@ export function StatsChart({
         <ReferenceLine y={0} stroke={AXIS} />
         <Tooltip
           content={(p) => <ChartTooltip {...p} bucket={series.bucket} source={series.source} />}
-          cursor={{ fill: "#ffffff08" }}
+          cursor={{ fill: HOVER_FILL }}
           allowEscapeViewBox={{ y: true }}
           reverseDirection={{ y: true }}
         />
         {compare && (
-          <Bar dataKey="cmpValue" fill={COMPARE_FILL} fillOpacity={COMPARE_OPACITY} radius={[3, 3, 0, 0]} maxBarSize={22} />
+          <Bar dataKey="cmpValue" fill={COMPARE_FILL} fillOpacity={COMPARE_OPACITY} radius={BAR_RADIUS_TOP} maxBarSize={MAX_BAR_SIZE} />
         )}
-        <Bar dataKey="value" radius={[3, 3, 0, 0]} maxBarSize={22}>
+        <Bar dataKey="value" radius={BAR_RADIUS_TOP} maxBarSize={MAX_BAR_SIZE}>
           {data.map((d, i) => (
             <Cell key={i} fill={(d.value ?? 0) < 0 ? NEGATIVE : color} />
           ))}
