@@ -86,7 +86,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </aside>
 
       {/* Mobile top bar */}
-      <header className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-bg/80 px-4 py-3 backdrop-blur lg:hidden">
+      <header className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-bg/80 px-4 py-3 backdrop-blur [transform:translateZ(0)] lg:hidden">
         <Wordmark />
         <button onClick={logout} aria-label="Sign out" className="text-sm text-muted">
           Sign out
@@ -97,7 +97,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <main className="flex-1 px-4 pb-28 pt-5 lg:px-8 lg:pt-8 lg:pb-10">{children}</main>
 
         {/* Mobile bottom nav */}
-        <nav aria-label="Primary" className="fixed inset-x-0 bottom-0 z-10 flex border-t border-border bg-bg/90 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden">
+        <nav aria-label="Primary" className="fixed inset-x-0 bottom-0 z-10 flex border-t border-border bg-bg/90 pb-[env(safe-area-inset-bottom)] backdrop-blur [transform:translateZ(0)] lg:hidden">
           {MOBILE_NAV.map((item) => {
             const Icon = item.icon;
             const active = isActive(item.href);
