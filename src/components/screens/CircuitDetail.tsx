@@ -117,43 +117,42 @@ function ConfirmDialog({
   );
 }
 
-/** Breaker on/off control, gated by the app flag and SPAN's own controllability. */
-function BreakerControl({ circuit, enabled }: { circuit: Circuit; enabled: boolean }) {
-  const [confirming, setConfirming] = useState(false);
+/**
+ * Inline relay control shown next to the live power. Read-only circuits (or
+ * when control is disabled) just render the On/Off status pill; controllable
+ * ones render an ON | OFF pill (green / red, active side full colour, inactive
+ * dimmed) that opens a confirmation modal before switching.
+ */
+function RelayControl({ circuit, enabled }: { circuit: Circuit; enabled: boolean }) {
+  // The side the user picked, awaiting confirmation.
+  const [confirmTarget, setConfirmTarget] = useState<boolean | null>(null);
   // The isOn value we've commanded and are waiting for the panel to echo.
   const [pending, setPending] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  if (!enabled) return null;
+  const controllable = enabled && circuit.controllable;
+  // Busy until the panel echoes the state we commanded (derived, so it clears
+  // itself when the live stream catches up).
+  const busy = pending !== null && circuit.isOn !== pending;
+  const displayOn = busy ? (pending as boolean) : circuit.isOn;
 
-  if (!circuit.controllable) {
+  if (!controllable) {
     return (
-      <Card className="flex items-center justify-between gap-3 p-4">
-        <div>
-          <div className="text-sm font-medium">Breaker control</div>
-          <div className="text-xs text-muted">
-            {circuit.alwaysOn
-              ? "Locked on by SPAN (always-on circuit)."
-              : "SPAN does not allow controlling this circuit."}
-          </div>
-        </div>
-        <span className="rounded-md bg-surface-3 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-faint">
-          Locked
-        </span>
-      </Card>
+      <span
+        className={`rounded-sm px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+          circuit.isOn ? "bg-positive/15 text-positive" : "bg-surface-3 text-faint"
+        }`}
+      >
+        {circuit.isOn ? "ON" : "OFF"}
+      </span>
     );
   }
 
-  const target = !circuit.isOn; // toggling flips the current state
-  // Busy until the panel echoes the state we commanded (derived, so it clears
-  // itself when the live stream catches up — no effect needed).
-  const busy = pending !== null && circuit.isOn !== pending;
-
-  async function commit() {
-    setConfirming(false);
+  async function commit(target: boolean) {
+    setConfirmTarget(null);
     setError(null);
     setPending(target);
-    // Fallback so we don't hang on "Switching…" if the panel never echoes.
+    // Fallback so the control doesn't hang if the panel never echoes.
     const fallback = setTimeout(() => setPending(null), 12_000);
     try {
       const res = await fetch(`/api/circuits/${encodeURIComponent(circuit.id)}/relay`, {
@@ -174,41 +173,51 @@ function BreakerControl({ circuit, enabled }: { circuit: Circuit; enabled: boole
   }
 
   return (
-    <Card className="flex items-center justify-between gap-3 p-4">
-      <div>
-        <div className="text-sm font-medium">Breaker control</div>
-        <div className="text-xs text-muted">
-          {busy ? "Sending command…" : circuit.isOn ? "This circuit is on." : "This circuit is off."}
-        </div>
-        {error && <div className="mt-1 text-xs text-negative">{error}</div>}
-      </div>
-      <button
-        onClick={() => setConfirming(true)}
-        disabled={busy}
-        className={`rounded-lg px-4 py-2 text-sm font-medium transition disabled:opacity-50 ${
-          circuit.isOn
-            ? "bg-surface-2 text-fg hover:bg-surface-3"
-            : "bg-positive/15 text-positive hover:bg-positive/25"
+    <div className="flex flex-col items-start gap-1">
+      <div
+        role="group"
+        aria-label={`${circuit.name} breaker`}
+        className={`inline-flex overflow-hidden rounded-sm border border-border text-[10px] font-semibold uppercase tracking-wide ${
+          busy ? "opacity-60" : ""
         }`}
       >
-        {busy ? "Switching…" : circuit.isOn ? "Turn off" : "Turn on"}
-      </button>
-
-      {confirming && (
+        <button
+          onClick={() => setConfirmTarget(true)}
+          disabled={busy || displayOn}
+          aria-pressed={displayOn}
+          className={`px-2 py-0.5 transition ${
+            displayOn ? "bg-positive/20 text-positive" : "text-positive/40 hover:text-positive/80"
+          }`}
+        >
+          ON
+        </button>
+        <button
+          onClick={() => setConfirmTarget(false)}
+          disabled={busy || !displayOn}
+          aria-pressed={!displayOn}
+          className={`px-2 py-0.5 transition ${
+            !displayOn ? "bg-negative/20 text-negative" : "text-negative/40 hover:text-negative/80"
+          }`}
+        >
+          OFF
+        </button>
+      </div>
+      {error && <span className="max-w-[11rem] text-[10px] text-negative">{error}</span>}
+      {confirmTarget !== null && (
         <ConfirmDialog
-          title={`Turn ${target ? "on" : "off"} ${circuit.name}?`}
+          title={`Turn ${confirmTarget ? "on" : "off"} ${circuit.name}?`}
           body={
-            target
+            confirmTarget
               ? "This energizes the circuit."
               : "This cuts power to everything on this circuit."
           }
-          confirmLabel={`Turn ${target ? "on" : "off"}`}
-          danger={!target}
-          onConfirm={commit}
-          onCancel={() => setConfirming(false)}
+          confirmLabel={`Turn ${confirmTarget ? "on" : "off"}`}
+          danger={!confirmTarget}
+          onConfirm={() => commit(confirmTarget)}
+          onCancel={() => setConfirmTarget(null)}
         />
       )}
-    </Card>
+    </div>
   );
 }
 
@@ -275,20 +284,12 @@ export function CircuitDetail({ id, controlEnabled }: { id: string; controlEnabl
       <div className="flex items-center justify-between gap-3">
         <h1 className="text-2xl font-bold tracking-tight">{circuit?.name ?? id}</h1>
         {circuit && (
-          <div className="flex items-center gap-2">
-            <span
-              className={`rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-                circuit.isOn ? "bg-positive/15 text-positive" : "bg-surface-3 text-faint"
-              }`}
-            >
-              {circuit.isOn ? "On" : "Off"}
-            </span>
+          <div className="flex items-center gap-3">
+            <RelayControl circuit={circuit} enabled={controlEnabled} />
             {live && <StatNumber value={live.value} unit={live.unit} color={SOURCE_COLOR.home} className="text-lg" />}
           </div>
         )}
       </div>
-
-      {circuit && <BreakerControl circuit={circuit} enabled={controlEnabled} />}
 
       <Segmented options={RANGES} value={range} onChange={pickRange} size="sm" ariaLabel="Time range" />
 
