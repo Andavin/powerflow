@@ -2,34 +2,22 @@
 import Link from "next/link";
 
 import { useMemo, useState } from "react";
-import { Card, Segmented, Spinner, StatNumber, ErrorNote } from "@/components/primitives";
+import { Card, Spinner, StatNumber, ErrorNote } from "@/components/primitives";
 import { StatsChart } from "@/components/charts/StatsChart";
+import {
+  CompareLegend,
+  CompareToggle,
+  PeriodControls,
+  usePeriodSelector,
+} from "@/components/PeriodControls";
 import { SOURCE_ICON } from "@/components/icons";
 import { useStats, useCircuitEnergy } from "@/lib/client/data";
-import { resolveRange } from "@/lib/time";
-import { PANEL_TZ, addDaysStr, dayRangeWindow, todayStr } from "@/lib/client/tz";
+import type { Window } from "@/lib/period";
 import { SOURCE_COLOR, SOURCE_LABEL } from "@/lib/palette";
 import { splitEnergy, formatPercent } from "@/lib/format";
-import type { EnergySeries, StatRange, StatSource } from "@/lib/types";
-
-type Mode = StatRange | "custom";
-type Window = { from: string; to: string };
+import type { EnergySeries, StatSource } from "@/lib/types";
 
 const SOURCES: StatSource[] = ["home", "solar", "battery", "grid"];
-const RANGES = [
-  { value: "today" as const, label: "Today" },
-  { value: "week" as const, label: "Week" },
-  { value: "month" as const, label: "Month" },
-  { value: "year" as const, label: "Year" },
-  { value: "custom" as const, label: "Custom" },
-];
-
-const PERIOD_NOUN: Record<StatRange, string> = {
-  today: "day",
-  week: "week",
-  month: "month",
-  year: "year",
-};
 
 /** The headline kWh for a source (what the change % compares). */
 function headlineKWh(series?: EnergySeries): number {
@@ -37,28 +25,6 @@ function headlineKWh(series?: EnergySeries): number {
   if (series.source === "battery") return series.totals.dischargedKWh ?? 0;
   if (series.source === "grid") return series.totals.importedKWh ?? 0;
   return series.totals.kWh;
-}
-
-function fmt(iso: string, opts: Intl.DateTimeFormatOptions): string {
-  return new Intl.DateTimeFormat("en-US", { timeZone: PANEL_TZ, ...opts }).format(new Date(iso));
-}
-
-/** Human label for the period currently in view. */
-function periodLabel(range: StatRange, offset: number, from: string, to: string): string {
-  switch (range) {
-    case "today":
-      if (offset === 0) return "Today";
-      if (offset === -1) return "Yesterday";
-      return fmt(from, { month: "short", day: "numeric", year: "numeric" });
-    case "week": {
-      const lastDay = new Date(new Date(to).getTime() - 86_400_000).toISOString();
-      return `${fmt(from, { month: "short", day: "numeric" })} – ${fmt(lastDay, { month: "short", day: "numeric" })}`;
-    }
-    case "month":
-      return fmt(from, { month: "long", year: "numeric" });
-    case "year":
-      return fmt(from, { year: "numeric" });
-  }
 }
 
 function SourceTabs({
@@ -90,29 +56,6 @@ function SourceTabs({
         );
       })}
     </div>
-  );
-}
-
-function DateField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  return (
-    <label className="flex flex-1 flex-col gap-1 text-xs text-muted">
-      {label}
-      <input
-        type="date"
-        value={value}
-        max={todayStr()}
-        onChange={(e) => onChange(e.target.value)}
-        className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-fg outline-none focus:border-battery"
-      />
-    </label>
   );
 }
 
@@ -247,34 +190,17 @@ function CircuitBreakdown({
 
 export function StatsScreen() {
   const [source, setSource] = useState<StatSource>("home");
-  const [range, setRange] = useState<Mode>("today");
-  // Period offset for presets: 0 = current, -1 = previous, etc.
-  const [offset, setOffset] = useState(0);
-  const [compare, setCompare] = useState(false);
-  const [fromC, setFromC] = useState(() => addDaysStr(todayStr(), -6));
-  const [toC, setToC] = useState(() => todayStr());
-
-  const now = new Date();
-  const isCustom = range === "custom";
-  const noun = isCustom ? "period" : PERIOD_NOUN[range];
-
-  // Selected window + the period immediately before it (for comparison).
-  const win = isCustom ? dayRangeWindow(fromC, toC) : resolveRange(range, now, PANEL_TZ, offset);
-  const prevWin: Window = isCustom
-    ? (() => {
-        const dur = new Date(win.to).getTime() - new Date(win.from).getTime();
-        return { from: new Date(new Date(win.from).getTime() - dur).toISOString(), to: win.from };
-      })()
-    : resolveRange(range, now, PANEL_TZ, offset - 1);
+  const sel = usePeriodSelector();
+  const { compare, noun, win, prev: prevWin } = sel;
 
   // Keep the live 30s refresh + SOC for the current preset period only.
-  const isPresetNow = !isCustom && offset === 0;
   const cur = useStats(
     source,
-    isPresetNow ? range : "custom",
-    isPresetNow ? undefined : { from: win.from, to: win.to },
+    sel.isPresetNow ? sel.range : "custom",
+    sel.isPresetNow ? undefined : { from: win.from, to: win.to },
   );
-  const prev = useStats(source, "custom", { from: prevWin.from, to: prevWin.to });
+  // Only fetch the previous period when the comparison is switched on.
+  const prev = useStats(source, "custom", { from: prevWin.from, to: prevWin.to }, compare);
 
   // Whole-home source mix for the window (dedupes with the breakdown's fetch).
   const energy = useCircuitEnergy("custom", { from: win.from, to: win.to });
@@ -289,74 +215,11 @@ export function StatsScreen() {
 
   const prevHeadline = splitEnergy(headlineKWh(prev.data?.series));
 
-  function pickRange(value: Mode) {
-    setRange(value);
-    setOffset(0);
-  }
-
-  function setCustomDays(n: number) {
-    const today = todayStr();
-    setFromC(addDaysStr(today, -(n - 1)));
-    setToC(today);
-  }
-
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-4">
       <SourceTabs source={source} onChange={setSource} />
-      <Segmented options={RANGES} value={range} onChange={pickRange} size="sm" ariaLabel="Time range" />
-
-      {/* Period navigation (presets) or a custom date range. */}
-      {isCustom ? (
-        <div className="flex flex-col gap-3">
-          <div className="flex items-end gap-3">
-            <DateField label="From" value={fromC} onChange={setFromC} />
-            <DateField label="To" value={toC} onChange={setToC} />
-          </div>
-          <div className="flex gap-2">
-            {[7, 30, 90].map((n) => (
-              <button
-                key={n}
-                onClick={() => setCustomDays(n)}
-                className="rounded-lg bg-surface-2 px-3 py-1.5 text-xs text-muted transition hover:bg-surface-3 hover:text-fg"
-              >
-                {n} days
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : (
-        <div className="flex items-center justify-between gap-3">
-          <button
-            onClick={() => setOffset((o) => o - 1)}
-            aria-label={`Previous ${noun}`}
-            className="rounded-lg bg-surface-2 px-3 py-1.5 text-sm text-muted transition hover:bg-surface-3 hover:text-fg"
-          >
-            ←
-          </button>
-          <span className="text-sm font-medium tabular-nums">{periodLabel(range, offset, win.from, win.to)}</span>
-          <button
-            onClick={() => setOffset((o) => Math.min(0, o + 1))}
-            disabled={offset >= 0}
-            aria-label={`Next ${noun}`}
-            className="rounded-lg bg-surface-2 px-3 py-1.5 text-sm text-muted transition hover:bg-surface-3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-30"
-          >
-            →
-          </button>
-        </div>
-      )}
-
-      {/* Compare toggle */}
-      <button
-        onClick={() => setCompare((v) => !v)}
-        aria-pressed={compare}
-        className={`self-start rounded-full border px-3 py-1.5 text-xs transition ${
-          compare
-            ? "border-transparent bg-surface-2 text-fg"
-            : "border-border text-muted hover:text-fg"
-        }`}
-      >
-        {compare ? `✓ Comparing to previous ${noun}` : `⇄ Compare to previous ${noun}`}
-      </button>
+      <PeriodControls sel={sel} />
+      <CompareToggle sel={sel} />
 
       {cur.error && <ErrorNote message={String(cur.error.message ?? cur.error)} />}
 
@@ -393,18 +256,7 @@ export function StatsScreen() {
               compare={compare ? prev.data?.series : undefined}
               height={260}
             />
-            {compare && (
-              <div className="mt-3 flex justify-center gap-4 text-[11px] text-muted">
-                <span className="flex items-center gap-1.5">
-                  <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: SOURCE_COLOR[source] }} />
-                  This {noun}
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="inline-block h-2.5 w-2.5 rounded-sm bg-white/40" />
-                  Previous {noun}
-                </span>
-              </div>
-            )}
+            {compare && <CompareLegend noun={noun} color={SOURCE_COLOR[source]} />}
           </>
         )}
       </Card>

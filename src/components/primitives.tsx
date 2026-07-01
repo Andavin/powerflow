@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { todayStr } from "@/lib/client/tz";
 
 export function Card({
   children,
@@ -84,6 +85,30 @@ export function StatNumber({
       <span className="font-semibold tracking-tight">{value}</span>
       <span className="ml-0.5 text-[0.6em] font-medium text-muted">{unit}</span>
     </span>
+  );
+}
+
+/** Labelled date picker for the custom-range controls. */
+export function DateField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <label className="flex flex-1 flex-col gap-1 text-xs text-muted">
+      {label}
+      <input
+        type="date"
+        value={value}
+        max={todayStr()}
+        onChange={(e) => onChange(e.target.value)}
+        className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-fg outline-none focus:border-battery"
+      />
+    </label>
   );
 }
 

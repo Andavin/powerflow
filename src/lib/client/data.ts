@@ -98,8 +98,9 @@ export function useStats(
   source: StatSource,
   range: StatRange | "custom",
   custom?: { from: string; to: string },
+  enabled = true,
 ) {
-  return useSWR<StatsResponse>(statsKey(source, range, custom), fetcher, {
+  return useSWR<StatsResponse>(enabled ? statsKey(source, range, custom) : null, fetcher, {
     refreshInterval: range === "today" ? 30_000 : 0,
     keepPreviousData: true,
   });
@@ -109,12 +110,13 @@ export function useCircuitStats(
   id: string | null,
   range: StatRange | "custom",
   custom?: { from: string; to: string },
+  enabled = true,
 ) {
   const params =
     range === "custom" && custom
       ? `from=${encodeURIComponent(custom.from)}&to=${encodeURIComponent(custom.to)}`
       : `range=${range}`;
-  const key = id ? `/api/circuit-stats?id=${encodeURIComponent(id)}&${params}` : null;
+  const key = enabled && id ? `/api/circuit-stats?id=${encodeURIComponent(id)}&${params}` : null;
   return useSWR<{ range: StatRange | "custom"; series: EnergySeries }>(key, fetcher, {
     refreshInterval: range === "today" ? 30_000 : 0,
     keepPreviousData: true,
