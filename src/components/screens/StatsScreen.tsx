@@ -181,20 +181,37 @@ function CircuitBreakdown({
   prevWindow: Window;
   compare: boolean;
 }) {
+  const [unit, setUnit] = useState<"kwh" | "pct">("kwh");
   const cur = useCircuitEnergy("custom", window);
   const prev = useCircuitEnergy("custom", compare ? prevWindow : window);
-  const circuits = cur.data?.circuits ?? [];
+  const circuits = useMemo(() => cur.data?.circuits ?? [], [cur.data]);
   const byPrev = useMemo(
     () => new Map((prev.data?.circuits ?? []).map((c) => [c.id, c.kWh])),
     [prev.data],
   );
+  const total = useMemo(() => circuits.reduce((s, c) => s + c.kWh, 0), [circuits]);
   if (circuits.length === 0) return null;
   return (
     <Card className="p-4">
-      <h2 className="mb-3 text-sm font-semibold text-muted">What used the most energy?</h2>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 className="text-sm font-semibold text-muted">What used the most energy?</h2>
+        <div className="flex overflow-hidden rounded-lg border border-border text-[11px]">
+          {(["kwh", "pct"] as const).map((u) => (
+            <button
+              key={u}
+              onClick={() => setUnit(u)}
+              aria-pressed={unit === u}
+              className={`px-2 py-1 transition ${unit === u ? "bg-surface-2 text-fg" : "text-muted hover:text-fg"}`}
+            >
+              {u === "kwh" ? "kWh" : "%"}
+            </button>
+          ))}
+        </div>
+      </div>
       <ul className="flex flex-col gap-2">
         {circuits.slice(0, 8).map((c) => {
           const e = splitEnergy(c.kWh);
+          const pct = total > 0 ? (c.kWh / total) * 100 : 0;
           const prevK = byPrev.get(c.id);
           const delta = compare && prevK != null && prevK > 0 ? (c.kWh - prevK) / prevK : null;
           return (
@@ -213,7 +230,11 @@ function CircuitBreakdown({
                       {delta > 0 ? "↑" : "↓"} {Math.abs(delta * 100).toFixed(0)}%
                     </span>
                   )}
-                  <StatNumber value={e.value} unit={e.unit} color={SOURCE_COLOR.home} />
+                  {unit === "pct" ? (
+                    <StatNumber value={pct.toFixed(pct < 10 ? 1 : 0)} unit="%" color={SOURCE_COLOR.home} />
+                  ) : (
+                    <StatNumber value={e.value} unit={e.unit} color={SOURCE_COLOR.home} />
+                  )}
                 </div>
               </Link>
             </li>
@@ -273,6 +294,12 @@ export function StatsScreen() {
     setOffset(0);
   }
 
+  function setCustomDays(n: number) {
+    const today = todayStr();
+    setFromC(addDaysStr(today, -(n - 1)));
+    setToC(today);
+  }
+
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-4">
       <SourceTabs source={source} onChange={setSource} />
@@ -280,9 +307,22 @@ export function StatsScreen() {
 
       {/* Period navigation (presets) or a custom date range. */}
       {isCustom ? (
-        <div className="flex items-end gap-3">
-          <DateField label="From" value={fromC} onChange={setFromC} />
-          <DateField label="To" value={toC} onChange={setToC} />
+        <div className="flex flex-col gap-3">
+          <div className="flex items-end gap-3">
+            <DateField label="From" value={fromC} onChange={setFromC} />
+            <DateField label="To" value={toC} onChange={setToC} />
+          </div>
+          <div className="flex gap-2">
+            {[7, 30, 90].map((n) => (
+              <button
+                key={n}
+                onClick={() => setCustomDays(n)}
+                className="rounded-lg bg-surface-2 px-3 py-1.5 text-xs text-muted transition hover:bg-surface-3 hover:text-fg"
+              >
+                {n} days
+              </button>
+            ))}
+          </div>
         </div>
       ) : (
         <div className="flex items-center justify-between gap-3">
