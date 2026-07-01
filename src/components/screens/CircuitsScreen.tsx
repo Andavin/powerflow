@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { Segmented, Spinner, StatNumber, ErrorNote } from "@/components/primitives";
+import { Segmented, Spinner, StatNumber, StatusPill, ErrorNote } from "@/components/primitives";
 import { useCircuitEnergy, useLiveStream } from "@/lib/client/data";
 import { splitPower, splitEnergy } from "@/lib/format";
 import type { Circuit } from "@/lib/types";
@@ -87,13 +87,7 @@ export function CircuitsScreen() {
                     c.alwaysOn && <span className="text-xs text-faint">Always on</span>
                   )}
                 </span>
-                <span
-                  className={`rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-                    c.isOn ? "bg-positive/15 text-positive" : "bg-surface-3 text-faint"
-                  }`}
-                >
-                  {c.isOn ? "On" : "Off"}
-                </span>
+                <StatusPill on={c.isOn} />
                 <span className="w-20 text-right">
                   <StatNumber value={p.value} unit={p.unit} />
                 </span>

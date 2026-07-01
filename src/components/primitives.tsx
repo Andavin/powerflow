@@ -112,6 +112,19 @@ export function DateField({
   );
 }
 
+/** Small On/Off status chip for a circuit relay. */
+export function StatusPill({ on }: { on: boolean }) {
+  return (
+    <span
+      className={`rounded-sm px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+        on ? "bg-positive/15 text-positive" : "bg-surface-3 text-faint"
+      }`}
+    >
+      {on ? "On" : "Off"}
+    </span>
+  );
+}
+
 export function Spinner({ className = "" }: { className?: string }) {
   return (
     <span

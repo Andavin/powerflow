@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Card, Spinner, StatNumber } from "@/components/primitives";
+import { Card, Spinner, StatNumber, StatusPill } from "@/components/primitives";
 import { StatsChart } from "@/components/charts/StatsChart";
 import {
   CompareLegend,
@@ -80,15 +80,7 @@ function RelayControl({ circuit, enabled }: { circuit: Circuit; enabled: boolean
   const displayOn = busy ? (pending as boolean) : circuit.isOn;
 
   if (!controllable) {
-    return (
-      <span
-        className={`rounded-sm px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-          circuit.isOn ? "bg-positive/15 text-positive" : "bg-surface-3 text-faint"
-        }`}
-      >
-        {circuit.isOn ? "ON" : "OFF"}
-      </span>
-    );
+    return <StatusPill on={circuit.isOn} />;
   }
 
   async function commit(target: boolean) {
