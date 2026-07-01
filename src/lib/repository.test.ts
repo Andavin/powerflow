@@ -43,6 +43,33 @@ describe("QuestDbRepository", () => {
     expect(deviceLookups).toHaveLength(1);
   });
 
+  it("retries the device lookup after a transient failure instead of caching the rejection", async () => {
+    let attempts = 0;
+    const client: QuestDbClient = {
+      async query(sql: string) {
+        if (/FROM power_flows LATEST ON/.test(sql)) {
+          attempts++;
+          if (attempts === 1) throw new Error("transient");
+          return [{ device_id: "dev-x" }];
+        }
+        if (/site, grid, pv, battery/.test(sql)) {
+          return [{ ts: "x", site: 1, grid: 0, pv: 0, battery: 0 }];
+        }
+        return [];
+      },
+      async queryRaw() {
+        throw new Error("not used");
+      },
+    };
+    const repo = new QuestDbRepository(client, { timezone: TZ });
+    // First read fails while resolving the device id...
+    await expect(repo.getFlow()).rejects.toThrow("transient");
+    // ...but the next read retries the lookup rather than replaying the failure.
+    const snap = await repo.getFlow();
+    expect(snap.homeW).toBe(1);
+    expect(attempts).toBe(2);
+  });
+
   it("getFlow normalises the latest reading", async () => {
     const { client } = fakeClient([
       [/FROM power_flows LATEST ON/, [{ device_id: "d" }]],

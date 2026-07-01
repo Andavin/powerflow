@@ -75,6 +75,12 @@ export class QuestDbRepository implements Repository {
         const id = rows[0]?.device_id;
         return id ? String(id) : null;
       });
+      // Never cache a rejection: a transient QuestDB blip on the first lookup
+      // would otherwise brick every future read (the singleton repository is
+      // reused process-wide) until a restart. Drop it so the next call retries.
+      this.devicePromise.catch(() => {
+        this.devicePromise = null;
+      });
     }
     return this.devicePromise;
   }
