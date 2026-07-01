@@ -33,18 +33,31 @@ interface ChartDatum {
   charge?: number;
   discharge?: number;
   soc?: number | null;
+  /** Comparison period, aligned by bucket index. */
+  cmp?: number;
+  cmpDischarge?: number;
 }
 
-function buildData(series: EnergySeries, soc?: { ts: string; soc: number | null }[]): ChartDatum[] {
+function buildData(
+  series: EnergySeries,
+  soc?: { ts: string; soc: number | null }[],
+  compare?: EnergySeries,
+): ChartDatum[] {
   const socByTs = new Map((soc ?? []).map((p) => [p.ts, p.soc]));
-  return series.points.map((p) => ({
+  const cmp = compare?.points;
+  return series.points.map((p, i) => ({
     ts: p.ts,
     value: p.kWh,
     charge: p.chargedKWh != null ? -p.chargedKWh : undefined,
     discharge: p.dischargedKWh,
     soc: socByTs.get(p.ts) ?? null,
+    cmp: cmp ? cmp[i]?.kWh : undefined,
+    cmpDischarge: cmp ? cmp[i]?.dischargedKWh : undefined,
   }));
 }
+
+const COMPARE_FILL = "#ffffff";
+const COMPARE_OPACITY = 0.4;
 
 // Recharts types its tooltip render-prop loosely (generic ValueType, readonly
 // payload). We keep this boundary permissive and normalise defensively below.
@@ -79,6 +92,7 @@ function labelForKey(key: string, source: StatSource): string {
   if (key === "charge") return "Charged";
   if (key === "discharge") return "Discharged";
   if (key === "soc") return "Charge";
+  if (key === "cmp" || key === "cmpDischarge") return "Previous";
   if (key === "value") return source === "grid" ? "Net" : "Energy";
   return key;
 }
@@ -86,13 +100,15 @@ function labelForKey(key: string, source: StatSource): string {
 export function StatsChart({
   series,
   soc,
+  compare,
   height = 240,
 }: {
   series: EnergySeries;
   soc?: { ts: string; soc: number | null }[];
+  compare?: EnergySeries;
   height?: number;
 }) {
-  const data = buildData(series, soc);
+  const data = buildData(series, soc, compare);
   const fmt = tickFormatter(series.bucket);
   const color = SOURCE_COLOR[series.source];
 
@@ -132,6 +148,9 @@ export function StatsChart({
           />
           <Bar dataKey="discharge" fill={color} radius={[3, 3, 0, 0]} maxBarSize={26} />
           <Bar dataKey="charge" fill="#ffffff" fillOpacity={0.85} radius={[0, 0, 3, 3]} maxBarSize={26} />
+          {compare && (
+            <Bar dataKey="cmpDischarge" fill={COMPARE_FILL} fillOpacity={COMPARE_OPACITY} radius={[3, 3, 0, 0]} maxBarSize={26} />
+          )}
           {soc && soc.length > 0 && (
             <Line
               yAxisId="soc"
@@ -165,6 +184,9 @@ export function StatsChart({
             <Cell key={i} fill={d.value < 0 ? NEGATIVE : color} />
           ))}
         </Bar>
+        {compare && (
+          <Bar dataKey="cmp" fill={COMPARE_FILL} fillOpacity={COMPARE_OPACITY} radius={[3, 3, 0, 0]} maxBarSize={26} />
+        )}
       </BarChart>
     </ResponsiveContainer>
   );

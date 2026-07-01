@@ -7,7 +7,6 @@ import {
   FlowNavIcon,
   CircuitsNavIcon,
   StatsNavIcon,
-  HistoryNavIcon,
   OverviewNavIcon,
 } from "./icons";
 
@@ -27,7 +26,6 @@ const DESKTOP_NAV: NavItem[] = [
   { href: "/", label: "Overview", icon: OverviewNavIcon },
   { href: "/circuits", label: "Circuits", icon: CircuitsNavIcon },
   { href: "/stats", label: "Stats", icon: StatsNavIcon },
-  { href: "/history", label: "History", icon: HistoryNavIcon },
 ];
 
 function Wordmark() {
