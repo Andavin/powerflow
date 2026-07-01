@@ -184,6 +184,11 @@ export function StatsChart({
   const data = buildData(series, soc, compare);
   const fmt = tickFormatter(series.bucket);
   const color = SOURCE_COLOR[series.source];
+  // Recharts positions grouped bars by registration order, not JSX order.
+  // The compare bars mount later (compare toggles on after first render), so
+  // they'd land on the right. Remount the chart when the bar set changes so all
+  // bars re-register top-to-bottom and the previous period sits on the LEFT.
+  const chartKey = `${series.source}:${compare ? "cmp" : "one"}`;
 
   if (data.length === 0) {
     return (
@@ -210,7 +215,7 @@ export function StatsChart({
     const showDots = data.length <= SOC_DOT_LIMIT;
     return (
       <ResponsiveContainer width="100%" height={height}>
-        <ComposedChart data={data} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+        <ComposedChart key={chartKey} data={data} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
           <CartesianGrid stroke={GRID_LINE} vertical={false} />
           <XAxis dataKey="ts" tickFormatter={fmt} {...axisProps} minTickGap={24} />
           <YAxis {...axisProps} width={40} />
@@ -219,6 +224,8 @@ export function StatsChart({
           <Tooltip
             content={(p) => <ChartTooltip {...p} bucket={series.bucket} source={series.source} />}
             cursor={<BandCursor dataLength={data.length} />}
+            allowEscapeViewBox={{ y: true }}
+            reverseDirection={{ y: true }}
           />
           {compare && (
             <>
@@ -248,7 +255,7 @@ export function StatsChart({
   // Home / solar: single value bars, previous period grouped to the left.
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <BarChart data={data} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+      <BarChart key={chartKey} data={data} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
         <CartesianGrid stroke={GRID_LINE} vertical={false} />
         <XAxis dataKey="ts" tickFormatter={fmt} {...axisProps} minTickGap={24} />
         <YAxis {...axisProps} width={40} />
@@ -256,6 +263,8 @@ export function StatsChart({
         <Tooltip
           content={(p) => <ChartTooltip {...p} bucket={series.bucket} source={series.source} />}
           cursor={{ fill: "#ffffff08" }}
+          allowEscapeViewBox={{ y: true }}
+          reverseDirection={{ y: true }}
         />
         {compare && (
           <Bar dataKey="cmpValue" fill={COMPARE_FILL} fillOpacity={COMPARE_OPACITY} radius={[3, 3, 0, 0]} maxBarSize={22} />
