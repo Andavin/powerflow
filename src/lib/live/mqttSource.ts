@@ -56,8 +56,6 @@ export class MqttLiveSource implements LiveSource {
     setInterval(() => void this.refreshMeta(), this.opts.metaRefreshMs).unref?.();
 
     const ca = this.opts.caFile ? [readFileSync(this.opts.caFile)] : undefined;
-    // Pinned-CA LAN device: validate the chain against our CA but don't require
-    // the cert hostname to match the broker IP.
     // Unique per-instance client id (stable for this process's lifetime).
     // Brokers allow one connection per client id, so a fixed id shared by two
     // instances (e.g. a deploy + a dev server) makes them kick each other in a
@@ -71,7 +69,10 @@ export class MqttLiveSource implements LiveSource {
       connectTimeout: 15_000,
       ca,
       rejectUnauthorized: this.opts.rejectUnauthorized,
-      checkServerIdentity: () => undefined,
+      // With a pinned CA we trust the chain but connect to the broker by IP, so
+      // skip the cert-hostname match. Without a pinned CA, keep the default
+      // identity check so a system-CA cert for another host can't be swapped in.
+      ...(ca ? { checkServerIdentity: () => undefined } : {}),
     } as mqtt.IClientOptions;
 
     const client = mqtt.connect(this.opts.url, options);

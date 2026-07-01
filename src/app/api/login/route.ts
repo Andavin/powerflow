@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { config } from "@/lib/config";
 import {
+  MIN_SESSION_SECRET_LEN,
   SESSION_COOKIE,
   createSessionToken,
   passwordMatches,
@@ -35,6 +36,14 @@ export async function POST(request: Request) {
   if (!cfg.password || !cfg.sessionSecret) {
     return jsonError("Login is not configured on the server", 500);
   }
+  // A short secret makes the stateless session token forgeable offline, which
+  // would be a full auth bypass. Refuse to issue tokens until it's strong.
+  if (cfg.sessionSecret.length < MIN_SESSION_SECRET_LEN) {
+    return jsonError(
+      `Server session secret is too weak: set POWERFLOW_SESSION_SECRET to at least ${MIN_SESSION_SECRET_LEN} characters (e.g. \`openssl rand -hex 32\`)`,
+      500,
+    );
+  }
 
   let password = "";
   try {
@@ -44,7 +53,7 @@ export async function POST(request: Request) {
     return jsonError("Invalid request body", 400);
   }
 
-  if (!passwordMatches(password, cfg.password)) {
+  if (!(await passwordMatches(password, cfg.password))) {
     return jsonError("Incorrect password", 401);
   }
 

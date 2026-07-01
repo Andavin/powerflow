@@ -77,13 +77,22 @@ export async function verifySessionToken(
   );
 }
 
-/** Constant-time-ish password comparison (length-leaking only). */
-export function passwordMatches(provided: string, expected: string): boolean {
+/** Minimum length for POWERFLOW_SESSION_SECRET (the token-forging boundary). */
+export const MIN_SESSION_SECRET_LEN = 32;
+
+async function sha256(s: string): Promise<Uint8Array> {
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(s)));
+}
+
+/**
+ * Constant-time password comparison. Both inputs are hashed to a fixed 32-byte
+ * digest before comparison, so neither the timing nor the loop length reveals
+ * anything about the real password's length. Web Crypto only (runs in Edge too).
+ */
+export async function passwordMatches(provided: string, expected: string): Promise<boolean> {
   if (!expected) return false;
-  if (provided.length !== expected.length) return false;
+  const [a, b] = await Promise.all([sha256(provided), sha256(expected)]);
   let diff = 0;
-  for (let i = 0; i < provided.length; i++) {
-    diff |= provided.charCodeAt(i) ^ expected.charCodeAt(i);
-  }
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
   return diff === 0;
 }

@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { getLiveSource } from "@/lib/live/getLiveSource";
 import type { LiveSnapshot } from "@/lib/live/types";
+import { isAuthenticated } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +13,11 @@ export const dynamic = "force-dynamic";
  * `top` event per coalesced snapshot.
  */
 export async function GET(request: NextRequest) {
+  // Defence-in-depth: the proxy already gates this, but don't start/subscribe
+  // to the live feed for an unauthenticated caller if that ever fails open.
+  if (!(await isAuthenticated())) {
+    return Response.json({ error: "unauthorized" }, { status: 401 });
+  }
   let live;
   try {
     live = getLiveSource();

@@ -41,12 +41,12 @@ describe("session tokens", () => {
 });
 
 describe("passwordMatches", () => {
-  it("matches identical strings", () => {
-    expect(passwordMatches("hunter2", "hunter2")).toBe(true);
+  it("matches identical strings", async () => {
+    expect(await passwordMatches("hunter2", "hunter2")).toBe(true);
   });
-  it("rejects different strings and empty expected", () => {
-    expect(passwordMatches("hunter2", "hunter3")).toBe(false);
-    expect(passwordMatches("x", "")).toBe(false);
-    expect(passwordMatches("short", "longer")).toBe(false);
+  it("rejects different strings and empty expected", async () => {
+    expect(await passwordMatches("hunter2", "hunter3")).toBe(false);
+    expect(await passwordMatches("x", "")).toBe(false);
+    expect(await passwordMatches("short", "longer")).toBe(false);
   });
 });
