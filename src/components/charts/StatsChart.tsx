@@ -148,6 +148,28 @@ function ChartTooltip(props: {
   );
 }
 
+/**
+ * A rectangle hover-highlight for ComposedChart (battery/grid). Recharts only
+ * draws the band cursor for BarChart; a ComposedChart otherwise gets a vertical
+ * line. Recharts clones this with the plot `offset` (top/width/height) and
+ * `points` (active band centre x), so we rebuild the same band BarChart uses.
+ */
+function BandCursor(props: any) {
+  const { points, top, height, width, dataLength } = props;
+  if (!points?.[0] || !width || !dataLength) return null;
+  const band = width / dataLength;
+  return (
+    <rect
+      x={points[0].x - band / 2}
+      y={top}
+      width={band}
+      height={height}
+      fill="#ffffff08"
+      pointerEvents="none"
+    />
+  );
+}
+
 export function StatsChart({
   series,
   soc,
@@ -196,7 +218,7 @@ export function StatsChart({
           <ReferenceLine y={0} stroke={AXIS} />
           <Tooltip
             content={(p) => <ChartTooltip {...p} bucket={series.bucket} source={series.source} />}
-            cursor={{ fill: "#ffffff08" }}
+            cursor={<BandCursor dataLength={data.length} />}
           />
           {compare && (
             <>
