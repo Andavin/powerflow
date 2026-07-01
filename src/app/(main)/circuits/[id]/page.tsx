@@ -1,4 +1,5 @@
 import { CircuitDetail } from "@/components/screens/CircuitDetail";
+import { config } from "@/lib/config";
 
 export default async function CircuitDetailPage({
   params,
@@ -6,5 +7,5 @@ export default async function CircuitDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  return <CircuitDetail id={id} />;
+  return <CircuitDetail id={id} controlEnabled={config().controlEnabled} />;
 }

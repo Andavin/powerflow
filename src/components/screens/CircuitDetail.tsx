@@ -9,7 +9,7 @@ import { resolveRange } from "@/lib/time";
 import { PANEL_TZ, addDaysStr, dayRangeWindow, todayStr } from "@/lib/client/tz";
 import { splitEnergy, splitPower } from "@/lib/format";
 import { SOURCE_COLOR } from "@/lib/palette";
-import type { StatRange } from "@/lib/types";
+import type { Circuit, StatRange } from "@/lib/types";
 
 type Mode = StatRange | "custom";
 
@@ -73,7 +73,146 @@ function DateField({
   );
 }
 
-export function CircuitDetail({ id }: { id: string }) {
+function ConfirmDialog({
+  title,
+  body,
+  confirmLabel,
+  danger,
+  onConfirm,
+  onCancel,
+}: {
+  title: string;
+  body: string;
+  confirmLabel: string;
+  danger: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      role="dialog"
+      aria-modal="true"
+    >
+      <Card className="w-full max-w-sm p-5">
+        <h3 className="text-lg font-semibold">{title}</h3>
+        <p className="mt-1 text-sm text-muted">{body}</p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm text-muted transition hover:text-fg">
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+              danger
+                ? "bg-negative/20 text-negative hover:bg-negative/30"
+                : "bg-positive/20 text-positive hover:bg-positive/30"
+            }`}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+/** Breaker on/off control, gated by the app flag and SPAN's own controllability. */
+function BreakerControl({ circuit, enabled }: { circuit: Circuit; enabled: boolean }) {
+  const [confirming, setConfirming] = useState(false);
+  // The isOn value we've commanded and are waiting for the panel to echo.
+  const [pending, setPending] = useState<boolean | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!enabled) return null;
+
+  if (!circuit.controllable) {
+    return (
+      <Card className="flex items-center justify-between gap-3 p-4">
+        <div>
+          <div className="text-sm font-medium">Breaker control</div>
+          <div className="text-xs text-muted">
+            {circuit.alwaysOn
+              ? "Locked on by SPAN (always-on circuit)."
+              : "SPAN does not allow controlling this circuit."}
+          </div>
+        </div>
+        <span className="rounded-md bg-surface-3 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-faint">
+          Locked
+        </span>
+      </Card>
+    );
+  }
+
+  const target = !circuit.isOn; // toggling flips the current state
+  // Busy until the panel echoes the state we commanded (derived, so it clears
+  // itself when the live stream catches up — no effect needed).
+  const busy = pending !== null && circuit.isOn !== pending;
+
+  async function commit() {
+    setConfirming(false);
+    setError(null);
+    setPending(target);
+    // Fallback so we don't hang on "Switching…" if the panel never echoes.
+    const fallback = setTimeout(() => setPending(null), 12_000);
+    try {
+      const res = await fetch(`/api/circuits/${encodeURIComponent(circuit.id)}/relay`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ on: target }),
+      });
+      if (!res.ok) {
+        const b = await res.json().catch(() => ({}));
+        throw new Error(b.error || `Request failed (${res.status})`);
+      }
+      // Leave `pending` set: the live stream confirms and `busy` clears itself.
+    } catch (e) {
+      clearTimeout(fallback);
+      setPending(null);
+      setError(e instanceof Error ? e.message : "Failed to send command");
+    }
+  }
+
+  return (
+    <Card className="flex items-center justify-between gap-3 p-4">
+      <div>
+        <div className="text-sm font-medium">Breaker control</div>
+        <div className="text-xs text-muted">
+          {busy ? "Sending command…" : circuit.isOn ? "This circuit is on." : "This circuit is off."}
+        </div>
+        {error && <div className="mt-1 text-xs text-negative">{error}</div>}
+      </div>
+      <button
+        onClick={() => setConfirming(true)}
+        disabled={busy}
+        className={`rounded-lg px-4 py-2 text-sm font-medium transition disabled:opacity-50 ${
+          circuit.isOn
+            ? "bg-surface-2 text-fg hover:bg-surface-3"
+            : "bg-positive/15 text-positive hover:bg-positive/25"
+        }`}
+      >
+        {busy ? "Switching…" : circuit.isOn ? "Turn off" : "Turn on"}
+      </button>
+
+      {confirming && (
+        <ConfirmDialog
+          title={`Turn ${target ? "on" : "off"} ${circuit.name}?`}
+          body={
+            target
+              ? "This energizes the circuit."
+              : "This cuts power to everything on this circuit."
+          }
+          confirmLabel={`Turn ${target ? "on" : "off"}`}
+          danger={!target}
+          onConfirm={commit}
+          onCancel={() => setConfirming(false)}
+        />
+      )}
+    </Card>
+  );
+}
+
+export function CircuitDetail({ id, controlEnabled }: { id: string; controlEnabled: boolean }) {
   const { circuits } = useLiveStream();
   const circuit = circuits.find((c) => c.id === id);
   const [range, setRange] = useState<Mode>("today");
@@ -148,6 +287,8 @@ export function CircuitDetail({ id }: { id: string }) {
           </div>
         )}
       </div>
+
+      {circuit && <BreakerControl circuit={circuit} enabled={controlEnabled} />}
 
       <Segmented options={RANGES} value={range} onChange={pickRange} size="sm" ariaLabel="Time range" />
 
