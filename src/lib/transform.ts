@@ -204,6 +204,8 @@ export function seriesFromFlowRows(
     if (source === "grid") {
       const imp = n > 0 ? integrate(num0(r.grid_import_sum) / n, h) : 0;
       const exp = n > 0 ? integrate(num0(r.grid_export_sum) / n, h) : 0;
+      point.importedKWh = round3(imp);
+      point.exportedKWh = round3(exp);
       imported += imp;
       exported += exp;
     }

@@ -178,6 +178,13 @@ describe("seriesFromFlowRows", () => {
     expect(s.totals.importedKWh).toBeCloseTo(1.6, 5);
     expect(s.totals.exportedKWh).toBe(0);
   });
+
+  it("grid exposes per-bucket import/export for the diverging chart", () => {
+    const s = seriesFromFlowRows(rows, window, "grid", now);
+    expect(s.points[0].importedKWh).toBeCloseTo(0.1, 5); // 10000/100 W over 1h
+    expect(s.points[1].importedKWh).toBeCloseTo(1.5, 5);
+    expect(s.points[0].exportedKWh).toBe(0);
+  });
 });
 
 describe("homeSourceMix + circuitEnergyFromRows", () => {

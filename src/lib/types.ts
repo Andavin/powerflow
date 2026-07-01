@@ -54,6 +54,10 @@ export interface EnergyPoint {
   chargedKWh?: number;
   /** Battery only: energy discharged (>=0). */
   dischargedKWh?: number;
+  /** Grid only: energy imported from the grid (>=0). */
+  importedKWh?: number;
+  /** Grid only: energy exported to the grid (>=0). */
+  exportedKWh?: number;
   /** Battery state-of-charge at bucket end, % (when available). */
   soc?: number | null;
 }
