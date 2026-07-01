@@ -227,6 +227,7 @@ export function CircuitDetail({ id, controlEnabled }: { id: string; controlEnabl
   const [range, setRange] = useState<Mode>("today");
   // Period offset for presets: 0 = current, -1 = previous period, etc.
   const [offset, setOffset] = useState(0);
+  const [compare, setCompare] = useState(false);
   const [fromC, setFromC] = useState(() => addDaysStr(todayStr(), -6));
   const [toC, setToC] = useState(() => todayStr());
 
@@ -252,7 +253,7 @@ export function CircuitDetail({ id, controlEnabled }: { id: string; controlEnabl
 
   const total = data?.series.totals.kWh ?? 0;
   const prevTotal = prevData?.series.totals.kWh ?? 0;
-  const delta = prevTotal > 0 ? (total - prevTotal) / prevTotal : null;
+  const delta = compare && prevTotal > 0 ? (total - prevTotal) / prevTotal : null;
   const t = splitEnergy(total);
   const live = circuit ? splitPower(circuit.watts) : null;
 
@@ -275,6 +276,12 @@ export function CircuitDetail({ id, controlEnabled }: { id: string; controlEnabl
     setOffset(0);
   }
 
+  function setCustomDays(n: number) {
+    const today = todayStr();
+    setFromC(addDaysStr(today, -(n - 1)));
+    setToC(today);
+  }
+
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-4">
       <Link href="/circuits" className="text-sm text-muted hover:text-fg">
@@ -295,9 +302,22 @@ export function CircuitDetail({ id, controlEnabled }: { id: string; controlEnabl
 
       {/* Period navigation (presets) or a custom date range. */}
       {isCustom ? (
-        <div className="flex items-end gap-3">
-          <DateField label="From" value={fromC} onChange={setFromC} />
-          <DateField label="To" value={toC} onChange={setToC} />
+        <div className="flex flex-col gap-3">
+          <div className="flex items-end gap-3">
+            <DateField label="From" value={fromC} onChange={setFromC} />
+            <DateField label="To" value={toC} onChange={setToC} />
+          </div>
+          <div className="flex gap-2">
+            {[7, 30, 90].map((n) => (
+              <button
+                key={n}
+                onClick={() => setCustomDays(n)}
+                className="rounded-lg bg-surface-2 px-3 py-1.5 text-xs text-muted transition hover:bg-surface-3 hover:text-fg"
+              >
+                {n} days
+              </button>
+            ))}
+          </div>
         </div>
       ) : (
         <div className="flex items-center justify-between gap-3">
@@ -320,6 +340,19 @@ export function CircuitDetail({ id, controlEnabled }: { id: string; controlEnabl
         </div>
       )}
 
+      {/* Compare toggle */}
+      <button
+        onClick={() => setCompare((v) => !v)}
+        aria-pressed={compare}
+        className={`self-start rounded-full border px-3 py-1.5 text-xs transition ${
+          compare
+            ? "border-transparent bg-surface-2 text-fg"
+            : "border-border text-muted hover:text-fg"
+        }`}
+      >
+        {compare ? `✓ Comparing to previous ${noun}` : `⇄ Compare to previous ${noun}`}
+      </button>
+
       <Card className="p-5">
         {!data || isLoading ? (
           <div className="flex h-[300px] items-center justify-center">
@@ -338,7 +371,23 @@ export function CircuitDetail({ id, controlEnabled }: { id: string; controlEnabl
                 )}
               </div>
             </div>
-            <StatsChart series={data.series} height={260} />
+            <StatsChart
+              series={data.series}
+              compare={compare ? prevData?.series : undefined}
+              height={260}
+            />
+            {compare && (
+              <div className="mt-3 flex justify-center gap-4 text-[11px] text-muted">
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: SOURCE_COLOR.home }} />
+                  This {noun}
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block h-2.5 w-2.5 rounded-sm bg-white/40" />
+                  Previous {noun}
+                </span>
+              </div>
+            )}
           </>
         )}
       </Card>
