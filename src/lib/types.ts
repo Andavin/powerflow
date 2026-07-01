@@ -95,11 +95,3 @@ export interface CircuitEnergy {
   /** Source mix as fractions 0..1 (solar/battery/grid), best-effort. */
   mix: { solar: number; battery: number; grid: number };
 }
-
-export interface BatteryState {
-  ts: string;
-  soc: number | null;
-  soe: number | null;
-  gridState: string | null;
-  connected: boolean | null;
-}

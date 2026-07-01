@@ -1,5 +1,4 @@
 import type {
-  BatteryState,
   Circuit,
   CircuitEnergy,
   EnergyPoint,
@@ -27,6 +26,13 @@ function num0(value: unknown): number {
 
 function str(value: unknown): string | null {
   return value === null || value === undefined ? null : String(value);
+}
+
+/** Like str() but throws on null — for required columns such as a bucket ts. */
+function reqStr(value: unknown, field: string): string {
+  const s = str(value);
+  if (s === null) throw new Error(`QuestDB row missing required field: ${field}`);
+  return s;
 }
 
 /**
@@ -78,16 +84,6 @@ export function toFlowSnapshot(flow: Row, battery?: Row | null): FlowSnapshot {
       battery && battery.connected !== undefined
         ? Boolean(battery.connected)
         : null,
-  };
-}
-
-export function toBatteryState(row: Row): BatteryState {
-  return {
-    ts: str(row.ts) ?? new Date(0).toISOString(),
-    soc: num(row.soc),
-    soe: num(row.soe),
-    gridState: str(row.grid_state),
-    connected: row.connected !== undefined ? Boolean(row.connected) : null,
   };
 }
 
@@ -207,7 +203,7 @@ export function seriesFromFlowRows(
   source: StatSource,
   nowMs: number,
 ): EnergySeries {
-  const starts = rows.map((r) => new Date(str(r.ts)!).getTime());
+  const starts = rows.map((r) => new Date(reqStr(r.ts, "ts")).getTime());
   const hours = bucketDurationsHours(starts, new Date(window.to).getTime(), nowMs);
   const col = COLUMN_FOR_SOURCE[source];
 
@@ -226,7 +222,7 @@ export function seriesFromFlowRows(
     const n = num0(r.n);
 
     const point: EnergyPoint = {
-      ts: str(r.ts)!,
+      ts: reqStr(r.ts, "ts"),
       kWh: round3(integrate(signed, h)),
     };
 
@@ -287,7 +283,7 @@ export function circuitSeriesFromRows(rows: Row[], window: TimeWindow): EnergySe
   const points: EnergyPoint[] = rows.map((r) => {
     const kWh = round3(num0(r.wh) / 1000);
     total += kWh;
-    return { ts: str(r.ts)!, kWh };
+    return { ts: reqStr(r.ts, "ts"), kWh };
   });
   return assembleEnergySeries("home", window, points, { total });
 }

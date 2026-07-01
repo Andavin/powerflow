@@ -112,6 +112,25 @@ export function DateField({
   );
 }
 
+/**
+ * Powerflow brand mark (gradient bar + wordmark). `lg` is the login variant:
+ * larger, and rendered as an <h1> so the login page keeps its heading.
+ */
+export function Wordmark({ size = "sm" }: { size?: "sm" | "lg" }) {
+  const lg = size === "lg";
+  const Heading = lg ? "h1" : "span";
+  return (
+    <span className={`flex items-center ${lg ? "gap-3" : "gap-2"}`}>
+      <span
+        className={`inline-block rounded-full bg-gradient-to-b from-solar via-battery to-grid ${
+          lg ? "h-7 w-3" : "h-5 w-2"
+        }`}
+      />
+      <Heading className={`font-semibold tracking-tight${lg ? " text-2xl" : ""}`}>Powerflow</Heading>
+    </span>
+  );
+}
+
 /** Small On/Off status chip for a circuit relay. */
 export function StatusPill({ on }: { on: boolean }) {
   return (

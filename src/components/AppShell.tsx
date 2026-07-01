@@ -9,6 +9,7 @@ import {
   StatsNavIcon,
   OverviewNavIcon,
 } from "./icons";
+import { Wordmark } from "./primitives";
 
 interface NavItem {
   href: string;
@@ -27,15 +28,6 @@ const DESKTOP_NAV: NavItem[] = [
   { href: "/circuits", label: "Circuits", icon: CircuitsNavIcon },
   { href: "/stats", label: "Stats", icon: StatsNavIcon },
 ];
-
-function Wordmark() {
-  return (
-    <span className="flex items-center gap-2">
-      <span className="inline-block h-5 w-2 rounded-full bg-gradient-to-b from-solar via-battery to-grid" />
-      <span className="font-semibold tracking-tight">Powerflow</span>
-    </span>
-  );
-}
 
 function useLogout() {
   const router = useRouter();

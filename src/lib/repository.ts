@@ -1,5 +1,4 @@
 import type {
-  BatteryState,
   Circuit,
   CircuitEnergy,
   EnergySeries,
@@ -26,7 +25,6 @@ import {
   homeSourceMix,
   num,
   seriesFromFlowRows,
-  toBatteryState,
   toCircuits,
   toFlowSnapshot,
 } from "./transform";
@@ -40,7 +38,6 @@ export interface SocPoint {
 export interface Repository {
   getFlow(): Promise<FlowSnapshot>;
   getCircuits(): Promise<Circuit[]>;
-  getBattery(): Promise<BatteryState>;
   getEnergySeries(source: StatSource, window: TimeWindow): Promise<EnergySeries>;
   getSocSeries(window: TimeWindow): Promise<SocPoint[]>;
   getCircuitEnergy(window: TimeWindow): Promise<CircuitEnergy[]>;
@@ -101,15 +98,6 @@ export class QuestDbRepository implements Repository {
     const device = await this.device();
     const rows = await this.client.query(circuitsLatestSql(device));
     return toCircuits(rows).sort((a, b) => b.watts - a.watts);
-  }
-
-  async getBattery(): Promise<BatteryState> {
-    const device = await this.device();
-    const rows = await this.client.query(latestBatterySql(device));
-    if (!rows[0]) {
-      return { ts: new Date(this.now()).toISOString(), soc: null, soe: null, gridState: null, connected: null };
-    }
-    return toBatteryState(rows[0]);
   }
 
   async getEnergySeries(

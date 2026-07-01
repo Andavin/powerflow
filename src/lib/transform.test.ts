@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   toFlowSnapshot,
-  toBatteryState,
   toCircuit,
   topConsumers,
   bucketDurationsHours,
@@ -74,20 +73,6 @@ describe("toFlowSnapshot", () => {
 
   it("clamps solar to non-negative", () => {
     expect(toFlowSnapshot({ pv: 12, site: 0, grid: 0, battery: 0 }).solarW).toBe(0);
-  });
-});
-
-describe("toBatteryState", () => {
-  it("reads fields", () => {
-    const b = toBatteryState({
-      ts: "2026-06-28T02:00:00Z",
-      soc: 29.5,
-      soe: 4.5,
-      grid_state: "ON_GRID",
-      connected: true,
-    });
-    expect(b.soc).toBe(29.5);
-    expect(b.connected).toBe(true);
   });
 });
 

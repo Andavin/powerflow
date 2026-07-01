@@ -2,6 +2,7 @@
 
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { Wordmark } from "@/components/primitives";
 
 function LoginForm() {
   const router = useRouter();
@@ -44,9 +45,8 @@ function LoginForm() {
         onSubmit={onSubmit}
         className="w-full max-w-sm rounded-3xl border border-border bg-surface/80 p-8 shadow-2xl backdrop-blur"
       >
-        <div className="mb-7 flex items-center gap-3">
-          <span className="inline-block h-7 w-3 rounded-full bg-gradient-to-b from-solar via-battery to-grid" />
-          <h1 className="text-2xl font-semibold tracking-tight">Powerflow</h1>
+        <div className="mb-7">
+          <Wordmark size="lg" />
         </div>
         <label className="mb-2 block text-sm text-muted" htmlFor="password">
           Password

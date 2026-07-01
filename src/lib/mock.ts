@@ -1,5 +1,4 @@
 import type {
-  BatteryState,
   Circuit,
   CircuitEnergy,
   EnergyPoint,
@@ -100,16 +99,6 @@ export class MockRepository implements Repository {
       alwaysOn: id === "fridge",
       controllable: id !== "fridge",
     })).sort((a, b) => b.watts - a.watts);
-  }
-
-  async getBattery(): Promise<BatteryState> {
-    return {
-      ts: new Date(REF_NOW).toISOString(),
-      soc: 56,
-      soe: 8.4,
-      gridState: "ON_GRID",
-      connected: true,
-    };
   }
 
   async getEnergySeries(
