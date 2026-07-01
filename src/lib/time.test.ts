@@ -88,6 +88,21 @@ describe("resolveRange", () => {
     expect(w.to).toBe("2027-01-01T07:00:00.000Z");
     expect(w.bucket).toBe("month");
   });
+
+  it("offset steps whole periods into the past", () => {
+    // Previous day.
+    expect(resolveRange("today", now, TZ, -1).from).toBe("2026-06-26T06:00:00.000Z");
+    expect(resolveRange("today", now, TZ, -1).to).toBe("2026-06-27T06:00:00.000Z");
+    // Previous calendar week.
+    const lastWeek = resolveRange("week", now, TZ, -1);
+    expect(lastWeek.from).toBe("2026-06-14T06:00:00.000Z");
+    expect(lastWeek.to).toBe("2026-06-21T06:00:00.000Z");
+    // Previous calendar month (May; MDT in summer).
+    expect(resolveRange("month", now, TZ, -1).from).toBe("2026-05-01T06:00:00.000Z");
+    expect(resolveRange("month", now, TZ, -1).to).toBe("2026-06-01T06:00:00.000Z");
+    // Previous year.
+    expect(resolveRange("year", now, TZ, -1).from).toBe("2025-01-01T07:00:00.000Z");
+  });
 });
 
 describe("bucketForSpan", () => {

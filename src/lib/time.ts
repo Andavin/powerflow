@@ -100,33 +100,40 @@ export function addDays(instant: Date, tz: string, n: number): number {
   return wallTimeToUtc(tz, c.year, c.month, c.day + n);
 }
 
-/** Resolve a preset range to a concrete UTC window + bucket. */
+/**
+ * Resolve a preset range to a concrete UTC window + bucket.
+ *
+ * `offset` steps the window by whole periods relative to `now`: 0 is the
+ * current period, -1 the previous one (last week / last month …), +1 the next.
+ */
 export function resolveRange(
   range: StatRange,
   now: Date,
   tz: string,
+  offset = 0,
 ): TimeWindow {
   const c = civilParts(now, tz);
   switch (range) {
     case "today": {
-      const from = wallTimeToUtc(tz, c.year, c.month, c.day);
-      const to = wallTimeToUtc(tz, c.year, c.month, c.day + 1);
+      const from = wallTimeToUtc(tz, c.year, c.month, c.day + offset);
+      const to = wallTimeToUtc(tz, c.year, c.month, c.day + offset + 1);
       return iso(from, to, "hour");
     }
     case "week": {
       // Calendar week starting Sunday.
-      const from = wallTimeToUtc(tz, c.year, c.month, c.day - c.weekday);
-      const to = wallTimeToUtc(tz, c.year, c.month, c.day - c.weekday + 7);
+      const start = c.day - c.weekday + offset * 7;
+      const from = wallTimeToUtc(tz, c.year, c.month, start);
+      const to = wallTimeToUtc(tz, c.year, c.month, start + 7);
       return iso(from, to, "day");
     }
     case "month": {
-      const from = wallTimeToUtc(tz, c.year, c.month, 1);
-      const to = wallTimeToUtc(tz, c.year, c.month + 1, 1);
+      const from = wallTimeToUtc(tz, c.year, c.month + offset, 1);
+      const to = wallTimeToUtc(tz, c.year, c.month + offset + 1, 1);
       return iso(from, to, "day");
     }
     case "year": {
-      const from = wallTimeToUtc(tz, c.year, 1, 1);
-      const to = wallTimeToUtc(tz, c.year + 1, 1, 1);
+      const from = wallTimeToUtc(tz, c.year + offset, 1, 1);
+      const to = wallTimeToUtc(tz, c.year + offset + 1, 1, 1);
       return iso(from, to, "month");
     }
   }
