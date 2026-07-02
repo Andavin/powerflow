@@ -58,7 +58,7 @@ export function CircuitsScreen() {
         onChange={(e) => setSearch(e.target.value)}
         placeholder="Search for circuits"
         aria-label="Search circuits"
-        className="w-full rounded-2xl border border-border bg-surface px-4 py-3 text-fg outline-none placeholder:text-faint focus:border-battery"
+        className="w-full rounded-2xl border border-border bg-surface px-4 py-3 text-fg outline-none placeholder:text-faint focus:border-battery focus-visible:border-battery focus-visible:ring-2 focus-visible:ring-battery/40"
       />
 
       {error && <ErrorNote message={String(error)} />}

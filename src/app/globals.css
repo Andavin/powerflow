@@ -53,6 +53,22 @@ body {
   scrollbar-width: none;
 }
 
+/*
+ * Keyboard-focus indicator. `:focus-visible` matches keyboard focus and (in
+ * modern browsers) programmatic focus that follows a keyboard interaction,
+ * but not a plain mouse click — so mouse users don't see the ring while
+ * Tab / arrow-key users get a clear indicator. Individual inputs may override
+ * with their own ring treatment via focus-visible: utilities.
+ */
+:focus {
+  outline: none;
+}
+:focus-visible {
+  outline: 2px solid var(--color-battery);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
