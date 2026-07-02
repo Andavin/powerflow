@@ -1,0 +1,121 @@
+name: Publish Docker image
+
+# Build the Powerflow image and publish it to GitHub Container Registry.
+#
+# Versioning is driven by package.json's "version" field — the single source
+# of truth — not by git tags, so the image version can never drift from the
+# app version:
+#   - push to main   -> :<version>, :<major.minor>, :latest, :edge, :sha-<short>
+#   - pull request    -> build only (no push); validates the Dockerfile
+#
+# To release: bump "version" in package.json and merge to main. The immutable
+# per-commit :sha-<short> tag always pins an exact build; the :<version> and
+# :latest tags float to the newest build of that version.
+#
+# Actions are pinned to commit SHAs (with the human-readable version alongside)
+# for supply-chain integrity; Dependabot keeps them current (.github/dependabot.yml).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+concurrency:
+  # Don't let two pushes to the same ref build/push on top of each other.
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      # Needed to publish a signed build-provenance attestation.
+      attestations: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      # GHCR requires a lowercase image path; the owner (Andavin) isn't.
+      - name: Compute image name
+        id: image
+        run: echo "name=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      # package.json is the source of truth for the version tag.
+      - name: Read version from package.json
+        id: ver
+        run: |
+          v=$(jq -r .version package.json)
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "minor=${v%.*}" >> "$GITHUB_OUTPUT"
+
+      # QEMU is only needed for the emulated arm64 build, which we skip on PRs.
+      - name: Set up QEMU
+        if: github.event_name != 'pull_request'
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      # Skip login on pull requests: forks can't read the token's packages
+      # scope, and PRs only build (never push) anyway.
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive tags and labels
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
+          tags: |
+            type=raw,value=${{ steps.ver.outputs.version }},enable=${{ github.event_name != 'pull_request' }}
+            type=raw,value=${{ steps.ver.outputs.minor }},enable=${{ github.event_name != 'pull_request' }}
+            type=raw,value=latest,enable=${{ github.event_name != 'pull_request' }}
+            type=edge,branch=main
+            type=ref,event=pr
+            type=sha,prefix=sha-
+          labels: |
+            org.opencontainers.image.title=Powerflow
+            org.opencontainers.image.description=Real-time energy dashboard for a home power panel
+            org.opencontainers.image.version=${{ steps.ver.outputs.version }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          # Multi-arch only for real pushes/releases. On PRs we just validate
+          # the build, so skip the slow emulated arm64 pass.
+          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Reuse layers across runs to keep rebuilds fast.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Provenance is attached below via actions/attest-build-provenance (a
+          # signed Sigstore attestation). Disable BuildKit's own inline
+          # provenance so the pushed index stays a clean multi-arch manifest
+          # without "unknown/unknown" entries.
+          provenance: false
+
+      # GitHub-native signed attestation linking the image digest to this run.
+      - name: Attest build provenance
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
