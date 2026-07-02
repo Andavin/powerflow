@@ -3,14 +3,12 @@
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Wordmark } from "@/components/primitives";
+import { safeNextPath } from "@/lib/auth";
 
 function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
-  // Only honour a same-origin relative path; reject absolute/protocol-relative
-  // URLs (e.g. //evil.com) so ?next= can't turn login into an open redirect.
-  const rawNext = params.get("next") || "/";
-  const next = rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/";
+  const next = safeNextPath(params.get("next"));
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
