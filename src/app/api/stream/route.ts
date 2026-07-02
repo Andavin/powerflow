@@ -30,6 +30,11 @@ export async function GET(request: NextRequest) {
   }
   const encoder = new TextEncoder();
 
+  // Send an SSE comment every 20s so idle connections don't get closed by
+  // proxies between the panel going quiet and the next snapshot. Comment
+  // frames start with `:` and are silently discarded by EventSource.
+  const HEARTBEAT_MS = 20_000;
+
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       let closed = false;
@@ -50,9 +55,19 @@ export async function GET(request: NextRequest) {
       if (initial) send(initial);
       const unsubscribe = live.subscribe(send);
 
+      const heartbeat = setInterval(() => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(`: keepalive\n\n`));
+        } catch {
+          /* controller already closed; abort will clean up */
+        }
+      }, HEARTBEAT_MS);
+
       const cleanup = () => {
         if (closed) return;
         closed = true;
+        clearInterval(heartbeat);
         unsubscribe();
         request.signal.removeEventListener("abort", cleanup);
         try {
