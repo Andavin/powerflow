@@ -36,6 +36,12 @@ function ConfirmDialog({
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const confirmRef = useRef<HTMLButtonElement | null>(null);
   const cancelRef = useRef<HTMLButtonElement | null>(null);
+  // Route onCancel through a ref so the keydown listener isn't re-registered
+  // on every parent render (the SSE-driven surrounding tree re-renders often).
+  const onCancelRef = useRef(onCancel);
+  useEffect(() => {
+    onCancelRef.current = onCancel;
+  }, [onCancel]);
 
   useEffect(() => {
     // Move focus into the dialog and restore it to the previously-focused
@@ -51,7 +57,7 @@ function ConfirmDialog({
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
         e.preventDefault();
-        onCancel();
+        onCancelRef.current();
         return;
       }
       if (e.key !== "Tab") return;
@@ -71,7 +77,7 @@ function ConfirmDialog({
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onCancel]);
+  }, []);
 
   return (
     <div

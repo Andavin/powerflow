@@ -126,9 +126,11 @@ export function useCircuitStats(
 export function useCircuitEnergy(
   range: StatRange | "custom",
   custom?: { from: string; to: string },
+  enabled = true,
 ) {
-  const key =
-    range === "custom" && custom
+  const key = !enabled
+    ? null
+    : range === "custom" && custom
       ? `/api/circuit-energy?from=${encodeURIComponent(custom.from)}&to=${encodeURIComponent(custom.to)}`
       : `/api/circuit-energy?range=${range}`;
   return useSWR<{ circuits: CircuitEnergy[] }>(key, fetcher, {

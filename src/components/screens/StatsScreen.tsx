@@ -101,7 +101,7 @@ function CircuitBreakdown({
 }) {
   const [unit, setUnit] = useState<"kwh" | "pct">("kwh");
   const cur = useCircuitEnergy("custom", window);
-  const prev = useCircuitEnergy("custom", compare ? prevWindow : window);
+  const prev = useCircuitEnergy("custom", prevWindow, compare);
   const circuits = useMemo(() => cur.data?.circuits ?? [], [cur.data]);
   const byPrev = useMemo(
     () => new Map((prev.data?.circuits ?? []).map((c) => [c.id, c.kWh])),
