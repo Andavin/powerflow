@@ -96,3 +96,19 @@ export async function passwordMatches(provided: string, expected: string): Promi
   for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
   return diff === 0;
 }
+
+/**
+ * Sanitise a `?next=` query parameter used post-login. Only same-origin
+ * relative paths are honoured; anything else — including protocol-relative
+ * `//evil.com`, backslash-prefixed `/\evil.com`, and absolute URLs — falls
+ * back to `/` so login can't be turned into an open redirect.
+ */
+export function safeNextPath(raw: string | null | undefined): string {
+  if (!raw) return "/";
+  // Must start with a single "/" — nothing else.
+  if (!raw.startsWith("/")) return "/";
+  // Reject "//..." (protocol-relative) and "/\..." (some browsers normalise
+  // backslashes to slashes, so /\evil.com behaves like //evil.com).
+  if (raw.length > 1 && (raw[1] === "/" || raw[1] === "\\")) return "/";
+  return raw;
+}

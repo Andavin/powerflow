@@ -47,28 +47,3 @@ export function splitEnergy(kWh: number): ValueUnit {
 export function formatPercent(fraction: number, digits = 0): string {
   return `${(fraction * 100).toFixed(digits)}%`;
 }
-
-/** Compact signed power label for flow legs, e.g. "+1.2 kW" / "-340 W". */
-export function signedPower(watts: number): string {
-  const { value, unit } = splitPower(Math.abs(watts));
-  const sign = watts > 0 ? "" : watts < 0 ? "-" : "";
-  return `${sign}${value} ${unit}`;
-}
-
-const SHORT_TIME = new Intl.DateTimeFormat("en-US", {
-  hour: "numeric",
-  minute: "2-digit",
-  timeZone: "America/Denver",
-});
-
-export function formatClock(iso: string, tz = "America/Denver"): string {
-  const fmt =
-    tz === "America/Denver"
-      ? SHORT_TIME
-      : new Intl.DateTimeFormat("en-US", {
-          hour: "numeric",
-          minute: "2-digit",
-          timeZone: tz,
-        });
-  return fmt.format(new Date(iso));
-}

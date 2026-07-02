@@ -35,14 +35,40 @@ export async function GET(request: NextRequest) {
   // frames start with `:` and are silently discarded by EventSource.
   const HEARTBEAT_MS = 20_000;
 
+  let cancel: () => void = () => {};
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       let closed = false;
-      const write = (event: string, data: unknown) => {
+      let heartbeat: ReturnType<typeof setInterval> | null = null;
+      let unsubscribe: () => void = () => {};
+
+      const cleanup = () => {
         if (closed) return;
-        controller.enqueue(
-          encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
-        );
+        closed = true;
+        if (heartbeat) clearInterval(heartbeat);
+        unsubscribe();
+        request.signal.removeEventListener("abort", cleanup);
+        try {
+          controller.close();
+        } catch {
+          /* already closed */
+        }
+      };
+      cancel = cleanup;
+
+      const enqueue = (chunk: Uint8Array) => {
+        if (closed) return;
+        try {
+          controller.enqueue(chunk);
+        } catch {
+          // Controller closed underneath us; tear the rest down so we're not
+          // holding the MQTT subscription and heartbeat interval for a dead
+          // response.
+          cleanup();
+        }
+      };
+      const write = (event: string, data: unknown) => {
+        enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
       };
       const send = (snap: LiveSnapshot) => {
         write("flow", snap.flow);
@@ -53,30 +79,20 @@ export async function GET(request: NextRequest) {
       // Prime with the latest snapshot, then stream updates.
       const initial = live.current();
       if (initial) send(initial);
-      const unsubscribe = live.subscribe(send);
+      unsubscribe = live.subscribe(send);
 
-      const heartbeat = setInterval(() => {
-        if (closed) return;
-        try {
-          controller.enqueue(encoder.encode(`: keepalive\n\n`));
-        } catch {
-          /* controller already closed; abort will clean up */
-        }
+      heartbeat = setInterval(() => {
+        // Comment frames (`:`-prefixed) are silently discarded by EventSource
+        // but keep intermediaries from closing an idle connection.
+        enqueue(encoder.encode(`: keepalive\n\n`));
       }, HEARTBEAT_MS);
 
-      const cleanup = () => {
-        if (closed) return;
-        closed = true;
-        clearInterval(heartbeat);
-        unsubscribe();
-        request.signal.removeEventListener("abort", cleanup);
-        try {
-          controller.close();
-        } catch {
-          /* already closed */
-        }
-      };
       request.signal.addEventListener("abort", cleanup);
+    },
+    cancel() {
+      // Fires when the platform tears down the response without dispatching
+      // request.signal abort (e.g., some proxies).
+      cancel();
     },
   });
 

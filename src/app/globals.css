@@ -16,13 +16,9 @@
   --color-faint: #5b616c;
 
   --color-solar: #ffce3a;
-  --color-solar-dim: #6b5a1c;
   --color-battery: #2ee6d6;
-  --color-battery-dim: #1b5d57;
   --color-grid: #6c7bff;
-  --color-grid-dim: #2f3570;
   --color-home: #3b9bff;
-  --color-home-dim: #1d4a78;
   --color-positive: #2ee6d6;
   --color-negative: #ff6b6b;
 
@@ -55,6 +51,27 @@ body {
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
+}
+
+/*
+ * Keyboard-focus indicator. `:focus-visible` matches keyboard focus and (in
+ * modern browsers) programmatic focus that follows a keyboard interaction,
+ * but not a plain mouse click — so mouse users don't see the ring while
+ * Tab / arrow-key users get a clear indicator. Individual inputs may override
+ * with their own ring treatment via focus-visible: utilities.
+ *
+ * We only suppress the native outline for focus that ISN'T focus-visible.
+ * On any engine that doesn't understand `:focus-visible`, the whole
+ * `:focus:not(:focus-visible)` rule is invalid and dropped, so the browser's
+ * default focus outline survives as a fallback instead of disappearing.
+ */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+:focus-visible {
+  outline: 2px solid var(--color-battery);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 @media (prefers-reduced-motion: reduce) {

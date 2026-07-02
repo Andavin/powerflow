@@ -21,15 +21,6 @@ export function addDaysStr(dateStr: string, days: number): string {
   return `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())}`;
 }
 
-/** Inclusive day count between two YYYY-MM-DD strings. */
-export function dayCount(fromStr: string, toStr: string): number {
-  const [fy, fm, fd] = fromStr.split("-").map(Number);
-  const [ty, tm, td] = toStr.split("-").map(Number);
-  const a = Date.UTC(fy, fm - 1, fd);
-  const b = Date.UTC(ty, tm - 1, td);
-  return Math.round((b - a) / 86_400_000) + 1;
-}
-
 /** Convert an inclusive YYYY-MM-DD..YYYY-MM-DD range to a UTC window. */
 export function dayRangeWindow(fromStr: string, toStr: string): TimeWindow {
   const [fy, fm, fd] = fromStr.split("-").map(Number);

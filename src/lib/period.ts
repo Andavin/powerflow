@@ -62,7 +62,11 @@ export function deriveWindows(
   now: Date,
 ): { win: TimeWindow; prev: Window } {
   const isCustom = range === "custom";
-  const win = isCustom ? dayRangeWindow(fromC, toC) : resolveRange(range, now, PANEL_TZ, offset);
+  // Belt-and-suspenders: the DateField cross-constrains min/max, but a
+  // mid-render state transient could still hand us an inverted range. Swap
+  // rather than blow up the query with a negative-duration window.
+  const [lo, hi] = isCustom && fromC > toC ? [toC, fromC] : [fromC, toC];
+  const win = isCustom ? dayRangeWindow(lo, hi) : resolveRange(range, now, PANEL_TZ, offset);
   const prev: Window = isCustom
     ? (() => {
         const dur = new Date(win.to).getTime() - new Date(win.from).getTime();

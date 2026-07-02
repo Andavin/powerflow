@@ -11,7 +11,7 @@ import {
 import type { LiveSnapshot, LiveSource, MetaProvider } from "./types";
 
 export interface MqttSourceOptions {
-  url: string; // e.g. mqtts://192.168.0.212:8883
+  url: string; // e.g. mqtts://<panel-ip>:8883
   username?: string;
   password?: string;
   caFile?: string | null;

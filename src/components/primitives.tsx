@@ -113,7 +113,7 @@ export function DateField({
         min={min}
         max={max ?? todayStr()}
         onChange={(e) => onChange(e.target.value)}
-        className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-fg outline-none focus:border-battery"
+        className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-fg outline-none focus:border-battery focus-visible:border-battery focus-visible:ring-2 focus-visible:ring-battery/40"
       />
     </label>
   );

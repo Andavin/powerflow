@@ -23,7 +23,7 @@ export function FlowScreen() {
 
   if (!flow) {
     return (
-      <div className="flex h-[60vh] items-center justify-center">
+      <div className="flex h-[60dvh] items-center justify-center">
         {error ? (
           <p className="text-muted">Waiting for live data…</p>
         ) : (
@@ -43,7 +43,9 @@ export function FlowScreen() {
             className={`inline-block h-1.5 w-1.5 rounded-full ${connected ? "bg-positive" : "bg-faint"}`}
             aria-hidden
           />
-          {connected ? "Live" : "Reconnecting…"}
+          <span aria-live="polite" aria-atomic="true">
+            {connected ? "Live" : "Reconnecting…"}
+          </span>
           {caption && <span className="text-faint">·</span>}
           {caption && <span>{caption}</span>}
         </div>

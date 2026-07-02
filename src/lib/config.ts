@@ -45,8 +45,8 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): PowerflowConfi
     dataMode,
     questdbUrl: (env.QUESTDB_URL ?? "http://127.0.0.1:9000").replace(/\/$/, ""),
     deviceId: env.POWERFLOW_DEVICE_ID?.trim() || null,
-    // The panel lives in Whitefish, MT. All "today/week/month/year" boundaries
-    // are computed in this zone unless overridden.
+    // All "today/week/month/year" boundaries are computed in the panel's civil
+    // timezone unless overridden.
     timezone: env.POWERFLOW_TIMEZONE?.trim() || "America/Denver",
     authDisabled: bool(env.POWERFLOW_AUTH_DISABLED, false),
     password: env.POWERFLOW_PASSWORD ?? "",

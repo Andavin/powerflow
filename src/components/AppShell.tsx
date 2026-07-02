@@ -86,7 +86,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </header>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <main className="flex-1 px-4 pb-28 pt-5 lg:px-8 lg:pt-8 lg:pb-10">{children}</main>
+        <main className="flex-1 px-4 pb-[calc(7rem+env(safe-area-inset-bottom))] pt-5 lg:px-8 lg:pt-8 lg:pb-10">{children}</main>
 
         {/* Mobile bottom nav */}
         <nav aria-label="Primary" className="fixed inset-x-0 bottom-0 z-10 flex border-t border-border bg-bg/90 pb-[env(safe-area-inset-bottom)] backdrop-blur [transform:translateZ(0)] lg:hidden">

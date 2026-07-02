@@ -88,18 +88,6 @@ export function wallTimeToUtc(
   return utc;
 }
 
-/** Start of the local day containing `instant`, as a UTC instant (ms). */
-export function startOfDay(instant: Date, tz: string): number {
-  const c = civilParts(instant, tz);
-  return wallTimeToUtc(tz, c.year, c.month, c.day);
-}
-
-/** Add `n` whole local days to a UTC instant, preserving local midnight. */
-export function addDays(instant: Date, tz: string, n: number): number {
-  const c = civilParts(instant, tz);
-  return wallTimeToUtc(tz, c.year, c.month, c.day + n);
-}
-
 /**
  * Resolve a preset range to a concrete UTC window + bucket.
  *

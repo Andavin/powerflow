@@ -117,8 +117,13 @@ export function DesktopDashboard() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold tracking-tight">Overview</h1>
         <span className="flex items-center gap-2 text-xs text-muted">
-          <span className={`inline-block h-1.5 w-1.5 rounded-full ${connected ? "bg-positive" : "bg-faint"}`} />
-          {connected ? "Live" : "Connecting…"}
+          <span
+            className={`inline-block h-1.5 w-1.5 rounded-full ${connected ? "bg-positive" : "bg-faint"}`}
+            aria-hidden
+          />
+          <span aria-live="polite" aria-atomic="true">
+            {connected ? "Live" : "Connecting…"}
+          </span>
         </span>
       </div>
 

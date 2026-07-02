@@ -83,9 +83,15 @@ function Totals({ series }: { series: EnergySeries }) {
 function MixChips({ mix }: { mix: { solar: number; battery: number; grid: number } }) {
   return (
     <div className="flex gap-3 text-[11px] tabular-nums text-muted" title="Where this period's home energy came from">
-      <span style={{ color: SOURCE_COLOR.solar }}>☀ {formatPercent(mix.solar)}</span>
-      <span style={{ color: SOURCE_COLOR.battery }}>▮ {formatPercent(mix.battery)}</span>
-      <span style={{ color: SOURCE_COLOR.grid }}>⊞ {formatPercent(mix.grid)}</span>
+      <span style={{ color: SOURCE_COLOR.solar }} aria-label={`Solar ${formatPercent(mix.solar)}`}>
+        <span aria-hidden="true">☀ {formatPercent(mix.solar)}</span>
+      </span>
+      <span style={{ color: SOURCE_COLOR.battery }} aria-label={`Battery ${formatPercent(mix.battery)}`}>
+        <span aria-hidden="true">▮ {formatPercent(mix.battery)}</span>
+      </span>
+      <span style={{ color: SOURCE_COLOR.grid }} aria-label={`Grid ${formatPercent(mix.grid)}`}>
+        <span aria-hidden="true">⊞ {formatPercent(mix.grid)}</span>
+      </span>
     </div>
   );
 }
@@ -101,7 +107,7 @@ function CircuitBreakdown({
 }) {
   const [unit, setUnit] = useState<"kwh" | "pct">("kwh");
   const cur = useCircuitEnergy("custom", window);
-  const prev = useCircuitEnergy("custom", compare ? prevWindow : window);
+  const prev = useCircuitEnergy("custom", prevWindow, compare);
   const circuits = useMemo(() => cur.data?.circuits ?? [], [cur.data]);
   const byPrev = useMemo(
     () => new Map((prev.data?.circuits ?? []).map((c) => [c.id, c.kWh])),
