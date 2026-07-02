@@ -3,33 +3,43 @@
 # Runs as its own container, separate from QuestDB. QuestDB publishes port 9000
 # on the host, so this reaches it via host.docker.internal (see extra_hosts) —
 # `localhost` inside a container is the container itself, not the host.
-# Secrets and timezone/device come from ./.env.
 #
 # The image is built and published to GHCR by the docker-publish workflow;
 # pull and run it (no local build) with:
 #
 #   docker compose pull && docker compose up -d
 #
-# Pin a specific release by setting POWERFLOW_TAG in ./.env (e.g. 0.1.0);
-# defaults to :latest.
+# All settings below have working defaults and can be overridden in ./.env:
+#   POWERFLOW_TAG      image tag to run (e.g. 0.1.0)          default: latest
+#   POWERFLOW_PORT     host port to expose the app on          default: 3007
+#   POWERFLOW_DATA_MODE  live | mock                           default: live
+#   QUESTDB_URL        QuestDB HTTP endpoint                    default: host gateway :9000
+#   POWERFLOW_AUTH_DISABLED  1 to bypass login (trusted LAN)    default: 0
+# Secrets (POWERFLOW_PASSWORD, POWERFLOW_SESSION_SECRET) and the MQTT settings
+# must be provided in ./.env for live mode + login to work.
 
 services:
   powerflow:
     image: ghcr.io/andavin/powerflow:${POWERFLOW_TAG:-latest}
     restart: unless-stopped
     ports:
-      - "3007:3000"
+      # host:container — the app listens on 3000 inside the container.
+      - "${POWERFLOW_PORT:-3007}:3000"
     env_file:
-      - .env
+      # Optional so `docker compose up` doesn't hard-fail on a fresh checkout;
+      # provide it for secrets + MQTT config in a real deployment.
+      - path: .env
+        required: false
     environment:
-      POWERFLOW_DATA_MODE: live
-      # QuestDB is in another container with port 9000 published on the host;
+      POWERFLOW_DATA_MODE: ${POWERFLOW_DATA_MODE:-live}
+      # QuestDB runs in another container with port 9000 published on the host;
       # reach it through the host gateway (mapped by extra_hosts below).
-      QUESTDB_URL: http://host.docker.internal:9000
-      POWERFLOW_AUTH_DISABLED: "0"
+      QUESTDB_URL: ${QUESTDB_URL:-http://host.docker.internal:9000}
+      POWERFLOW_AUTH_DISABLED: ${POWERFLOW_AUTH_DISABLED:-0}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
+      # /api/health is public (no auth) and always 200 when the server is up.
       test:
         - CMD-SHELL
         - node -e "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
