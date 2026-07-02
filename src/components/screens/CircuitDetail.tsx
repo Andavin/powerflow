@@ -132,12 +132,29 @@ function RelayControl({ circuit, enabled }: { circuit: Circuit; enabled: boolean
   // The isOn value we've commanded and are waiting for the panel to echo.
   const [pending, setPending] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Timer that gives up on the pending state if the panel never echoes.
+  const fallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const controllable = enabled && circuit.controllable;
   // Busy until the panel echoes the state we commanded (derived, so it clears
   // itself when the live stream catches up).
   const busy = pending !== null && circuit.isOn !== pending;
   const displayOn = busy ? (pending as boolean) : circuit.isOn;
+
+  // Once the panel confirms (busy false), the fallback is no longer needed;
+  // leaving it armed would let it fire mid-way through a subsequent command.
+  useEffect(() => {
+    if (!busy && fallbackRef.current) {
+      clearTimeout(fallbackRef.current);
+      fallbackRef.current = null;
+    }
+  }, [busy]);
+
+  useEffect(() => {
+    return () => {
+      if (fallbackRef.current) clearTimeout(fallbackRef.current);
+    };
+  }, []);
 
   if (!controllable) {
     return <StatusPill on={circuit.isOn} />;
@@ -148,7 +165,11 @@ function RelayControl({ circuit, enabled }: { circuit: Circuit; enabled: boolean
     setError(null);
     setPending(target);
     // Fallback so the control doesn't hang if the panel never echoes.
-    const fallback = setTimeout(() => setPending(null), 12_000);
+    if (fallbackRef.current) clearTimeout(fallbackRef.current);
+    fallbackRef.current = setTimeout(() => {
+      fallbackRef.current = null;
+      setPending(null);
+    }, 12_000);
     try {
       const res = await fetch(`/api/circuits/${encodeURIComponent(circuit.id)}/relay`, {
         method: "POST",
@@ -159,9 +180,13 @@ function RelayControl({ circuit, enabled }: { circuit: Circuit; enabled: boolean
         const b = await res.json().catch(() => ({}));
         throw new Error(b.error || `Request failed (${res.status})`);
       }
-      // Leave `pending` set: the live stream confirms and `busy` clears itself.
+      // Leave `pending` set: the live stream confirms and the busy effect clears
+      // the fallback once the panel echoes.
     } catch (e) {
-      clearTimeout(fallback);
+      if (fallbackRef.current) {
+        clearTimeout(fallbackRef.current);
+        fallbackRef.current = null;
+      }
       setPending(null);
       setError(e instanceof Error ? e.message : "Failed to send command");
     }
