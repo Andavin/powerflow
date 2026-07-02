@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { Card, Spinner, StatNumber, StatusPill } from "@/components/primitives";
 import { StatsChart } from "@/components/charts/StatsChart";
@@ -31,29 +31,89 @@ function ConfirmDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const titleId = useId();
+  const bodyId = useId();
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const confirmRef = useRef<HTMLButtonElement | null>(null);
+  const cancelRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    // Move focus into the dialog and restore it to the previously-focused
+    // control (usually the ON/OFF button) when the dialog closes.
+    const opener = document.activeElement as HTMLElement | null;
+    confirmRef.current?.focus();
+    return () => {
+      opener?.focus?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onCancel();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      // Trap Tab between Cancel and Confirm so focus can't leave onto the
+      // live ON/OFF buttons underneath.
+      const first = cancelRef.current;
+      const last = confirmRef.current;
+      if (!first || !last) return;
+      const active = document.activeElement;
+      if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel]);
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-      role="dialog"
-      aria-modal="true"
+      onClick={(e) => {
+        // Backdrop click cancels; clicks inside the card do not bubble here.
+        if (e.target === e.currentTarget) onCancel();
+      }}
     >
-      <Card className="w-full max-w-sm p-5">
-        <h3 className="text-lg font-semibold">{title}</h3>
-        <p className="mt-1 text-sm text-muted">{body}</p>
-        <div className="mt-5 flex justify-end gap-2">
-          <button onClick={onCancel} className="rounded-lg px-4 py-2 text-sm text-muted transition hover:text-fg">
-            Cancel
-          </button>
-          <button
-            onClick={onConfirm}
-            className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
-              danger
-                ? "bg-negative/20 text-negative hover:bg-negative/30"
-                : "bg-positive/20 text-positive hover:bg-positive/30"
-            }`}
-          >
-            {confirmLabel}
-          </button>
+      <Card
+        as="div"
+        className="w-full max-w-sm p-5"
+      >
+        <div
+          ref={dialogRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          aria-describedby={bodyId}
+        >
+          <h3 id={titleId} className="text-lg font-semibold">{title}</h3>
+          <p id={bodyId} className="mt-1 text-sm text-muted">{body}</p>
+          <div className="mt-5 flex justify-end gap-2">
+            <button
+              ref={cancelRef}
+              onClick={onCancel}
+              className="rounded-lg px-4 py-2 text-sm text-muted transition hover:text-fg"
+            >
+              Cancel
+            </button>
+            <button
+              ref={confirmRef}
+              onClick={onConfirm}
+              className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                danger
+                  ? "bg-negative/20 text-negative hover:bg-negative/30"
+                  : "bg-positive/20 text-positive hover:bg-positive/30"
+              }`}
+            >
+              {confirmLabel}
+            </button>
+          </div>
         </div>
       </Card>
     </div>
