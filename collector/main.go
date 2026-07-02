@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -16,6 +17,16 @@ import (
 )
 
 const version = "5.0.0"
+
+// Watchdog: the SPAN panel publishes continuously (power flows roughly every
+// second), so a prolonged silence means the subscription has gone dead even if
+// the TCP/TLS connection looks alive (e.g. a broker that dropped our sub without
+// closing the socket). Rather than sit idle forever, the collector exits so its
+// supervisor (Docker `restart: unless-stopped`) restarts it and re-subscribes.
+const (
+	staleDataThreshold = 5 * time.Minute
+	staleCheckInterval = 30 * time.Second
+)
 
 // pendingWrite is a node snapshot queued for the next ILP flush.
 type pendingWrite struct {
@@ -25,8 +36,9 @@ type pendingWrite struct {
 }
 
 func main() {
-	cfgPath := flag.String("config", "/config/config.yml", "path to YAML config file")
+	cfgPath := flag.String("config", "/config/config.yml", "path to YAML config file (optional; SPAN_* env vars override it)")
 	showVer := flag.Bool("version", false, "print version and exit")
+	initCfg := flag.Bool("init", false, "write a starter config file to -config and exit")
 	flag.Parse()
 
 	if *showVer {
@@ -35,14 +47,16 @@ func main() {
 	}
 
 	// ---- Config -------------------------------------------------------
-	if _, err := os.Stat(*cfgPath); os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "Config not found at %s — generating default config\n", *cfgPath)
+	// `-init` explicitly scaffolds a starter file; normal startup treats a
+	// missing config as "use defaults + SPAN_* env" so the collector can run
+	// with no file at all (e.g. under docker compose).
+	if *initCfg {
 		if err := WriteDefaultConfig(*cfgPath); err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: failed to write default config: %v\n", err)
 			os.Exit(1)
 		}
 		fmt.Fprintf(os.Stderr, "Default config written to %s — edit it and restart\n", *cfgPath)
-		os.Exit(0)
+		return
 	}
 
 	cfg, err := LoadConfig(*cfgPath)
@@ -127,14 +141,30 @@ func main() {
 	// ---- Collector + MQTT client --------------------------------------
 	// onUpdate fires for every MQTT property update once a node is ready.
 	// On BecameReady, it queues the initial snapshot for that node.
+	//
+	// The send is non-blocking: this runs on Paho's message-handler goroutine,
+	// so a blocking send would stall MQTT processing (and could drop the broker
+	// connection) whenever the writer is backed up, e.g. during a QuestDB
+	// outage. Under sustained backpressure we drop the snapshot instead — the
+	// next update for the node re-snapshots its full current state, and energy
+	// deltas are computed from live state on the flush timer regardless, so a
+	// dropped snapshot loses at most one instant, never the running totals.
+	var droppedWrites uint64
 	onUpdate := func(result UpdateResult) {
 		if result.BecameReady {
 			logger.Info("node ready — all described properties received", "node", result.NodeID)
 		}
-		updateCh <- pendingWrite{
+		select {
+		case updateCh <- pendingWrite{
 			nodeID: result.NodeID,
 			props:  state.NodeValues(result.NodeID),
 			ts:     result.Timestamp,
+		}:
+		default:
+			if n := atomic.AddUint64(&droppedWrites, 1); n == 1 || n%500 == 0 {
+				logger.Warn("update channel full; dropping node snapshot (writer backed up)",
+					"node", result.NodeID, "dropped_total", n)
+			}
 		}
 	}
 
@@ -172,6 +202,10 @@ func main() {
 	// needed here. Disconnect is called explicitly during graceful shutdown
 	// after the writer drains; no defer needed here.
 
+	// ---- Stale-data watchdog ------------------------------------------
+	watchdogStop := make(chan struct{})
+	go runWatchdog(state, logger, watchdogStop)
+
 	// ---- Signal handling ----------------------------------------------
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -180,6 +214,7 @@ func main() {
 
 	sig := <-sigCh
 	logger.Info("shutting down", "signal", sig)
+	close(watchdogStop) // stop the watchdog before draining so it can't exit(1) mid-shutdown
 	close(updateCh)
 	writerWg.Wait()
 	qdbWriter.Close()
@@ -209,6 +244,31 @@ func flushBatch(batch []pendingWrite, qdb *QuestDBWriter, energy *EnergyTracker,
 		"updates", len(batch),
 		"deltas", len(deltas),
 	)
+}
+
+// runWatchdog exits the process if no MQTT data has arrived for
+// staleDataThreshold, so a supervisor can restart and re-subscribe. It does
+// nothing until the first message is seen (lastUpdate is zero at startup while
+// waiting for $description), and returns when stop is closed during shutdown.
+func runWatchdog(state *State, logger *slog.Logger, stop <-chan struct{}) {
+	ticker := time.NewTicker(staleCheckInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			_, _, _, last := state.Stats()
+			if last.IsZero() {
+				continue // no data yet — startup grace, don't trip the watchdog
+			}
+			if age := time.Since(last); age > staleDataThreshold {
+				logger.Error("no MQTT data received within threshold; exiting for supervisor restart",
+					"stale_for", age.Round(time.Second), "threshold", staleDataThreshold)
+				os.Exit(1)
+			}
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------

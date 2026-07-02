@@ -223,3 +223,60 @@ func TestSetupLogger(t *testing.T) {
 		})
 	}
 }
+
+func TestParseConfigEnvOnly(t *testing.T) {
+	// No file at all — the collector should be fully configurable from env.
+	t.Setenv("SPAN_MQTT_SERVER", "panel.local")
+	t.Setenv("SPAN_MQTT_PORT", "8883")
+	t.Setenv("SPAN_MQTT_USERNAME", "user")
+	t.Setenv("SPAN_MQTT_PASSWORD", "secret")
+	t.Setenv("SPAN_MQTT_CA_CERT", "")
+	t.Setenv("SPAN_TOPIC_PREFIX", "ebus/5")
+	t.Setenv("SPAN_DEVICE_ID", "dev-9")
+	t.Setenv("SPAN_QUESTDB_HOST", "questdb")
+
+	cfg, err := ParseConfig(nil)
+	if err != nil {
+		t.Fatalf("ParseConfig(nil) with env: %v", err)
+	}
+	if cfg.MQTT.Server != "panel.local" || cfg.MQTT.Port != 8883 {
+		t.Errorf("mqtt server/port = %q/%d", cfg.MQTT.Server, cfg.MQTT.Port)
+	}
+	if cfg.MQTT.Username != "user" || cfg.MQTT.Password != "secret" {
+		t.Errorf("mqtt creds = %q/%q", cfg.MQTT.Username, cfg.MQTT.Password)
+	}
+	if cfg.Span.DeviceID != "dev-9" || cfg.Span.TopicPrefix != "ebus/5" {
+		t.Errorf("span = %q/%q", cfg.Span.DeviceID, cfg.Span.TopicPrefix)
+	}
+	if cfg.QuestDB.Host != "questdb" {
+		t.Errorf("questdb host = %q", cfg.QuestDB.Host)
+	}
+}
+
+func TestParseConfigEnvOverridesFile(t *testing.T) {
+	// Env wins over a value supplied in the file.
+	yaml := []byte("mqtt:\n  server: fromfile\n  password: fromfile\nspan:\n  device_id: fromfile\n")
+	t.Setenv("SPAN_MQTT_PASSWORD", "fromenv")
+
+	cfg, err := ParseConfig(yaml)
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if cfg.MQTT.Password != "fromenv" {
+		t.Errorf("password = %q, want fromenv (env should win)", cfg.MQTT.Password)
+	}
+	if cfg.MQTT.Server != "fromfile" {
+		t.Errorf("server = %q, want fromfile (unset env leaves file value)", cfg.MQTT.Server)
+	}
+	if cfg.Span.DeviceID != "fromfile" {
+		t.Errorf("device_id = %q, want fromfile", cfg.Span.DeviceID)
+	}
+}
+
+func TestParseConfigInvalidEnvInt(t *testing.T) {
+	t.Setenv("SPAN_DEVICE_ID", "dev-9")
+	t.Setenv("SPAN_MQTT_PORT", "not-a-number")
+	if _, err := ParseConfig(nil); err == nil {
+		t.Fatal("expected an error for a non-numeric SPAN_MQTT_PORT")
+	}
+}

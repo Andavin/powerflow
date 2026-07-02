@@ -1,9 +1,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -102,7 +104,7 @@ mqtt:
 span:
   # MQTT topic prefix where the SPAN panel publishes (Homie 5.0)
   topic_prefix: "ebus/5"
-  # SPAN panel device ID (serial number)
+  # SPAN panel device ID (serial number) — replace with your panel's serial
   device_id: "REPLACE-WITH-YOUR-PANEL-SERIAL"
   # How long to wait for every described property of a node to arrive before
   # the node is marked "ready" with whatever has been received. Properties
@@ -153,10 +155,23 @@ func WriteDefaultConfig(path string) error {
 // Loading & validation
 // ---------------------------------------------------------------------------
 
+// LoadConfig reads config from a YAML file (if present) and then applies
+// SPAN_* environment overrides. The file is optional: when it's missing, the
+// collector runs entirely from environment variables (plus built-in defaults),
+// which is how it's driven under docker compose. A path that exists but can't
+// be read is still an error.
 func LoadConfig(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read config: %w", err)
+	var data []byte
+	if path != "" {
+		b, err := os.ReadFile(path)
+		switch {
+		case err == nil:
+			data = b
+		case errors.Is(err, os.ErrNotExist):
+			// No file — rely on defaults + environment overrides.
+		default:
+			return nil, fmt.Errorf("read config: %w", err)
+		}
 	}
 	return ParseConfig(data)
 }
@@ -185,8 +200,16 @@ func ParseConfig(data []byte) (*Config, error) {
 		},
 	}
 
-	if err := yaml.Unmarshal(data, cfg); err != nil {
-		return nil, fmt.Errorf("parse config: %w", err)
+	if len(data) > 0 {
+		if err := yaml.Unmarshal(data, cfg); err != nil {
+			return nil, fmt.Errorf("parse config: %w", err)
+		}
+	}
+
+	// Environment overrides win over the file, so the same value (e.g. the MQTT
+	// password) can live in a single .env shared with the rest of the stack.
+	if err := applyEnvOverrides(cfg); err != nil {
+		return nil, err
 	}
 
 	dur, err := time.ParseDuration(cfg.QuestDB.WriteInterval)
@@ -209,6 +232,74 @@ func ParseConfig(data []byte) (*Config, error) {
 	}
 
 	return cfg, cfg.validate()
+}
+
+// applyEnvOverrides layers SPAN_* environment variables on top of whatever the
+// file (or defaults) provided. Only variables that are actually set take
+// effect, so a partial environment leaves the rest untouched.
+func applyEnvOverrides(cfg *Config) error {
+	envStr("SPAN_MQTT_SERVER", &cfg.MQTT.Server)
+	if err := envInt("SPAN_MQTT_PORT", &cfg.MQTT.Port); err != nil {
+		return err
+	}
+	envStr("SPAN_MQTT_CLIENT_ID", &cfg.MQTT.ClientID)
+	envStr("SPAN_MQTT_USERNAME", &cfg.MQTT.Username)
+	envStr("SPAN_MQTT_PASSWORD", &cfg.MQTT.Password)
+	envStr("SPAN_MQTT_CA_CERT", &cfg.MQTT.CACert)
+
+	envStr("SPAN_TOPIC_PREFIX", &cfg.Span.TopicPrefix)
+	envStr("SPAN_DEVICE_ID", &cfg.Span.DeviceID)
+	envStr("SPAN_READINESS_GRACE", &cfg.Span.ReadinessGrace)
+
+	envStr("SPAN_QUESTDB_HOST", &cfg.QuestDB.Host)
+	if err := envInt("SPAN_QUESTDB_ILP_PORT", &cfg.QuestDB.ILPPort); err != nil {
+		return err
+	}
+	if err := envInt("SPAN_QUESTDB_HTTP_PORT", &cfg.QuestDB.HTTPPort); err != nil {
+		return err
+	}
+	envStr("SPAN_QUESTDB_WRITE_INTERVAL", &cfg.QuestDB.WriteInterval)
+	if err := envBool("SPAN_QUESTDB_CREATE_TABLES", &cfg.QuestDB.CreateTables); err != nil {
+		return err
+	}
+
+	envStr("SPAN_LOG_LEVEL", &cfg.Logging.Level)
+	envStr("SPAN_LOG_FORMAT", &cfg.Logging.Format)
+	return nil
+}
+
+// envStr overwrites *dst when key is set (even to an empty string, so an
+// explicit blank can clear a value).
+func envStr(key string, dst *string) {
+	if v, ok := os.LookupEnv(key); ok {
+		*dst = v
+	}
+}
+
+func envInt(key string, dst *int) error {
+	v, ok := os.LookupEnv(key)
+	if !ok {
+		return nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return fmt.Errorf("env %s: %w", key, err)
+	}
+	*dst = n
+	return nil
+}
+
+func envBool(key string, dst *bool) error {
+	v, ok := os.LookupEnv(key)
+	if !ok {
+		return nil
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return fmt.Errorf("env %s: %w", key, err)
+	}
+	*dst = b
+	return nil
 }
 
 func (c *Config) validate() error {
