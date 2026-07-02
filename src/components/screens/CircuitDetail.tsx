@@ -228,7 +228,11 @@ function RelayControl({ circuit, enabled }: { circuit: Circuit; enabled: boolean
           OFF
         </button>
       </div>
-      {error && <span className="max-w-[11rem] text-[10px] text-negative">{error}</span>}
+      {error && (
+        <span role="alert" className="max-w-[11rem] text-[10px] text-negative">
+          {error}
+        </span>
+      )}
       {confirmTarget !== null && (
         <ConfirmDialog
           title={`Turn ${confirmTarget ? "on" : "off"} ${circuit.name}?`}

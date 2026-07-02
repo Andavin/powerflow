@@ -90,6 +90,27 @@ const BAR_RADIUS_BOTTOM: [number, number, number, number] = [0, 0, 3, 3];
 /** Below this many buckets we mark the SOC line with dots (the daily look). */
 const SOC_DOT_LIMIT = 40;
 
+function sourceNoun(source: StatSource): string {
+  switch (source) {
+    case "solar":
+      return "Solar generated";
+    case "battery":
+      return "Battery";
+    case "grid":
+      return "Grid";
+    case "home":
+      return "Home usage";
+  }
+}
+
+/** Short screen-reader summary for the chart wrapper. Recharts itself is opaque. */
+function chartSummary(series: EnergySeries, compare?: EnergySeries): string {
+  const bucketNoun = series.bucket === "hour" ? "Hourly" : series.bucket === "day" ? "Daily" : "Monthly";
+  const total = series.totals.kWh.toFixed(1);
+  const cmp = compare ? ` compared with previous period (${compare.totals.kWh.toFixed(1)} kWh)` : "";
+  return `${bucketNoun} ${sourceNoun(series.source).toLowerCase()} bar chart: ${total} kWh total${cmp}.`;
+}
+
 function labelForKey(key: string, source: StatSource): string {
   const up = source === "battery" ? "Discharged" : source === "grid" ? "Imported" : "Energy";
   const down = source === "battery" ? "Charged" : "Exported";
@@ -190,6 +211,7 @@ export function StatsChart({
   const data = buildData(series, soc, compare);
   const fmt = tickFormatter(series.bucket);
   const color = SOURCE_COLOR[series.source];
+  const ariaLabel = chartSummary(series, compare);
   // Recharts positions grouped bars by registration order, not JSX order.
   // The compare bars mount later (compare toggles on after first render), so
   // they'd land on the right. Remount the chart when the bar set changes so all
@@ -199,6 +221,8 @@ export function StatsChart({
   if (data.length === 0) {
     return (
       <div
+        role="img"
+        aria-label={`${sourceNoun(series.source)}: no data for this period.`}
         className="flex items-center justify-center text-sm text-faint"
         style={{ height }}
       >
@@ -220,6 +244,7 @@ export function StatsChart({
     const hasSoc = series.source === "battery" && !!soc && soc.length > 0;
     const showDots = data.length <= SOC_DOT_LIMIT;
     return (
+      <div role="img" aria-label={ariaLabel} style={{ width: "100%", height }}>
       <ResponsiveContainer width="100%" height={height}>
         <ComposedChart key={chartKey} data={data} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
           <CartesianGrid stroke={GRID_LINE} vertical={false} />
@@ -255,11 +280,13 @@ export function StatsChart({
           )}
         </ComposedChart>
       </ResponsiveContainer>
+      </div>
     );
   }
 
   // Home / solar: single value bars, previous period grouped to the left.
   return (
+    <div role="img" aria-label={ariaLabel} style={{ width: "100%", height }}>
     <ResponsiveContainer width="100%" height={height}>
       <BarChart key={chartKey} data={data} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
         <CartesianGrid stroke={GRID_LINE} vertical={false} />
@@ -282,5 +309,6 @@ export function StatsChart({
         </Bar>
       </BarChart>
     </ResponsiveContainer>
+    </div>
   );
 }
