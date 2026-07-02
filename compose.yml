@@ -5,12 +5,17 @@
 # `localhost` inside a container is the container itself, not the host.
 # Secrets and timezone/device come from ./.env.
 #
-#   docker compose up -d --build
+# The image is built and published to GHCR by the docker-publish workflow;
+# pull and run it (no local build) with:
+#
+#   docker compose pull && docker compose up -d
+#
+# Pin a specific release by setting POWERFLOW_TAG in ./.env (e.g. 0.1.0);
+# defaults to :latest.
 
 services:
   powerflow:
-    build: .
-    image: powerflow:latest
+    image: ghcr.io/andavin/powerflow:${POWERFLOW_TAG:-latest}
     restart: unless-stopped
     ports:
       - "3007:3000"

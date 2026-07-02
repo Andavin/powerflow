@@ -1,0 +1,108 @@
+name: Publish Docker image
+
+# Build the Powerflow image and publish it to GitHub Container Registry.
+#
+# Versioning (industry-standard, driven by docker/metadata-action):
+#   - push to main            -> :edge, :main, :sha-<short>
+#   - git tag vX.Y.Z          -> :X.Y.Z, :X.Y, :X, :latest, :sha-<short>
+#   - pull request            -> build only (no push), tagged :pr-<n> in logs
+#
+# Cut a release by tagging a commit on main, e.g.
+#   git tag v0.1.0 && git push origin v0.1.0
+# Keep the tag in step with package.json's "version".
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  # Resolves to <owner>/<repo>; metadata-action lowercases it for GHCR.
+  IMAGE_NAME: ${{ github.repository }}
+
+concurrency:
+  # Don't let two pushes to the same ref build/push on top of each other.
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      # Needed to publish a signed build-provenance attestation.
+      attestations: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # QEMU + Buildx enable the multi-arch build below.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Skip the login on pull requests: forks can't read the token's
+      # packages:write scope, and PRs only build (never push) anyway.
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=edge,branch=main
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix=sha-
+            # Only tag :latest for a real semver release, not every push to main.
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+          labels: |
+            org.opencontainers.image.title=Powerflow
+            org.opencontainers.image.description=Real-time energy dashboard for a home power panel
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          # Multi-arch only for real pushes/releases. On PRs we just validate
+          # the build, so skip the slow emulated arm64 pass.
+          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Reuse layers across runs to keep rebuilds fast.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Provenance is attached below via actions/attest-build-provenance (a
+          # signed Sigstore attestation). Disable BuildKit's own inline
+          # provenance so the pushed index stays a clean multi-arch manifest
+          # without "unknown/unknown" entries.
+          provenance: false
+
+      # GitHub-native signed attestation linking the image digest to this run.
+      - name: Attest build provenance
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
