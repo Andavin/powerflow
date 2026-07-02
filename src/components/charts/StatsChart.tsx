@@ -15,8 +15,9 @@ import {
 } from "recharts";
 import type { Bucket, EnergySeries, StatSource } from "@/lib/types";
 import { SOURCE_COLOR, AXIS, GRID_LINE, NEGATIVE } from "@/lib/palette";
+import { PANEL_TZ } from "@/lib/client/tz";
 
-function tickFormatter(bucket: Bucket, tz = "America/Denver") {
+function tickFormatter(bucket: Bucket, tz = PANEL_TZ) {
   const opts: Intl.DateTimeFormatOptions =
     bucket === "hour"
       ? { hour: "numeric", timeZone: tz }

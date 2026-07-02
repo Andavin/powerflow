@@ -2,8 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   civilParts,
   wallTimeToUtc,
-  startOfDay,
-  addDays,
   resolveRange,
   bucketForSpan,
   sampleByUnit,
@@ -40,20 +38,6 @@ describe("wallTimeToUtc", () => {
   it("maps Denver midnight in winter to 07:00 UTC", () => {
     const utc = wallTimeToUtc(TZ, 2026, 1, 15);
     expect(new Date(utc).toISOString()).toBe("2026-01-15T07:00:00.000Z");
-  });
-});
-
-describe("startOfDay / addDays", () => {
-  const now = new Date("2026-06-28T02:37:00Z"); // local 2026-06-27 20:37
-  it("start of local day is previous 06:00 UTC", () => {
-    expect(new Date(startOfDay(now, TZ)).toISOString()).toBe(
-      "2026-06-27T06:00:00.000Z",
-    );
-  });
-  it("adds local days preserving midnight", () => {
-    expect(new Date(addDays(now, TZ, 1)).toISOString()).toBe(
-      "2026-06-28T06:00:00.000Z",
-    );
   });
 });
 

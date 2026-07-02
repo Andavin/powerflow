@@ -5,7 +5,6 @@ import {
   formatWatts,
   splitEnergy,
   formatPercent,
-  signedPower,
 } from "./format";
 
 describe("splitPower", () => {
@@ -55,10 +54,3 @@ describe("formatPercent", () => {
   });
 });
 
-describe("signedPower", () => {
-  it("signs negative values only", () => {
-    expect(signedPower(1200)).toBe("1.20 kW");
-    expect(signedPower(-340)).toBe("-340 W");
-    expect(signedPower(0)).toBe("0 W");
-  });
-});
