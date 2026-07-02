@@ -93,10 +93,16 @@ export function DateField({
   label,
   value,
   onChange,
+  min,
+  max,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
+  /** Lower bound (YYYY-MM-DD). Defaults to no lower bound. */
+  min?: string;
+  /** Upper bound (YYYY-MM-DD). Defaults to today. */
+  max?: string;
 }) {
   return (
     <label className="flex flex-1 flex-col gap-1 text-xs text-muted">
@@ -104,7 +110,8 @@ export function DateField({
       <input
         type="date"
         value={value}
-        max={todayStr()}
+        min={min}
+        max={max ?? todayStr()}
         onChange={(e) => onChange(e.target.value)}
         className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-fg outline-none focus:border-battery"
       />

@@ -95,8 +95,10 @@ export function PeriodControls({ sel }: { sel: PeriodSelector }) {
       {sel.isCustom ? (
         <div className="flex flex-col gap-3">
           <div className="flex items-end gap-3">
-            <DateField label="From" value={sel.fromC} onChange={sel.setFromC} />
-            <DateField label="To" value={sel.toC} onChange={sel.setToC} />
+            {/* Cross-constrain so From can't exceed To (which would yield an
+                inverted, empty query). */}
+            <DateField label="From" value={sel.fromC} onChange={sel.setFromC} max={sel.toC} />
+            <DateField label="To" value={sel.toC} onChange={sel.setToC} min={sel.fromC} />
           </div>
           <div className="flex gap-2">
             {[7, 30, 90].map((n) => (
