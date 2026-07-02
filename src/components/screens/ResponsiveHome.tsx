@@ -22,7 +22,7 @@ export function ResponsiveHome() {
 
   if (isDesktop === null) {
     // Pre-measurement: render nothing to avoid opening a stream we'd discard.
-    return <div className="min-h-[50vh]" />;
+    return <div className="min-h-[50dvh]" />;
   }
   return isDesktop ? <DesktopDashboard /> : <FlowScreen />;
 }
