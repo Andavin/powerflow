@@ -1,6 +1,7 @@
 services:
   span-collector:
     build: .
+    container_name: span-collector
     restart: unless-stopped
     depends_on:
       questdb:
@@ -9,9 +10,17 @@ services:
       - ./config:/config
     networks:
       - span
+    # Persist and rotate logs so `docker logs span-collector` is always
+    # available (and can't balloon on a crash-loop).
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
   questdb:
     image: questdb/questdb
+    container_name: questdb
     restart: unless-stopped
     ports:
       - "9000:9000"   # Web console + HTTP API

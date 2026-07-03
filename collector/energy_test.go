@@ -178,7 +178,7 @@ func TestEnergyTrackerCounterResetRebasesBaseline(t *testing.T) {
 }
 
 // TestEnergyTrackerTransientZeroDoesNotSpike is the direct regression guard for
-// the per-circuit energy spike (ENERGY-SPIKE-FINDINGS.md). A single transient
+// the per-circuit energy spike. A single transient
 // low/zero reading (e.g. a retained 0 republished on a panel reboot) followed by
 // recovery to the true lifetime cumulative must NOT emit a delta equal to that
 // cumulative. The baseline is preserved through the dip, so the recovery reading

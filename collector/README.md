@@ -35,7 +35,7 @@ SPAN panel ──MQTT/TLS (Homie 5.0)──▶ collector ──ILP-over-HTTP─�
 The panel publishes **cumulative** `imported-energy` / `exported-energy`
 registers per circuit. The collector turns them into per-interval deltas
 (`power_usage` table). Two guards keep a transient bad reading from becoming a
-huge fake spike (see [`ENERGY-SPIKE-FINDINGS.md`](./ENERGY-SPIKE-FINDINGS.md)):
+huge fake spike:
 
 - **Baseline preservation.** A reading that goes *backwards* is treated as a
   transient glitch (e.g. a retained `0` republished on reboot) and the baseline

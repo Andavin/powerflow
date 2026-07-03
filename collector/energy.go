@@ -38,7 +38,8 @@ type EnergyDelta struct {
 const msPerHour = 60 * 60 * 1000
 
 // Guards against the two failure modes that produced the per-circuit energy
-// spike (see ENERGY-SPIKE-FINDINGS.md):
+// spike (a transient low reading poisoning the baseline, then a full-lifetime
+// recovery delta):
 //
 //   - resetConfirmReadings: a counter that reads lower than its baseline is
 //     treated as a transient glitch until it stays low for this many readings,
