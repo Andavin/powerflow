@@ -65,8 +65,15 @@ func parseTopic(topicBase, fullTopic string) topicResult {
 	node := rest[:slash]
 	property := rest[slash+1:]
 
-	// Skip nested $ topics under nodes
-	if strings.HasPrefix(property, "$") {
+	// Only single-segment Homie property IDs are real state. The `#`
+	// subscription also delivers command sub-topics (".../relay/set") and
+	// nested attribute topics (".../relay/$settable" or ".../$name"); parsing
+	// those as properties yields invalid column names like "relay/" that
+	// QuestDB rejects, poisoning every subsequent circuits batch (the bad
+	// property sticks in the node's cached snapshot and is re-sent each flush).
+	// Legit properties are always one segment (relay, active-power, soe, ...),
+	// so drop anything containing '/' or starting with '$'.
+	if strings.ContainsRune(property, '/') || strings.HasPrefix(property, "$") {
 		return topicResult{Ignored: true}
 	}
 

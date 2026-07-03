@@ -197,6 +197,50 @@ func TestBuildRowLine(t *testing.T) {
 	}
 }
 
+func TestIsValidColumnName(t *testing.T) {
+	tests := []struct {
+		col  string
+		want bool
+	}{
+		{"relay", true},
+		{"active_power", true},
+		{"l1_voltage", true},
+		{"_private", true},
+		{"", false},
+		{"relay/", false}, // leaked "<circuit>/relay/set" → propToColumn keeps '/'
+		{"relay/set", false},
+		{"1phase", false}, // may not start with a digit
+		{"has space", false},
+		{"weird=name", false},
+	}
+	for _, tt := range tests {
+		if got := isValidColumnName(tt.col); got != tt.want {
+			t.Errorf("isValidColumnName(%q) = %v, want %v", tt.col, got, tt.want)
+		}
+	}
+}
+
+// TestBuildRowLineSkipsInvalidColumn is the backstop regression guard: even if a
+// command/attribute sub-topic leaks through as a property, the row builder must
+// drop that column (not emit "relay/") while still writing the valid columns —
+// otherwise one bad name rejects the whole table's ILP batch.
+func TestBuildRowLineSkipsInvalidColumn(t *testing.T) {
+	ts := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+	props := map[string]interface{}{
+		"relay":        "CLOSED", // valid (symbol)
+		"relay/set":    "1",      // leaked command sub-topic → invalid column, must be skipped
+		"active-power": 42.0,     // valid field
+	}
+	result := buildRowLine("circuits", "dev-1", nil, props, ts)
+
+	if strings.Contains(result, "relay/") {
+		t.Errorf("invalid column leaked into line: %q", result)
+	}
+	if !strings.Contains(result, "active_power=42") {
+		t.Errorf("valid field should still be written: %q", result)
+	}
+}
+
 func TestBuildRowLineWithExtras(t *testing.T) {
 	ts := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
 	extras := map[string]string{"direction": "upstream"}

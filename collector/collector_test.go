@@ -56,6 +56,25 @@ func TestParseTopic(t *testing.T) {
 			wantIgn: true,
 		},
 		{
+			// Relay command sub-topic: must be ignored, not parsed as the
+			// property "relay/set" (which becomes an invalid "relay/" column
+			// and poisons the whole circuits batch).
+			name:    "relay command sub-topic",
+			topic:   "ebus/5/dev-1/circuit-3/relay/set",
+			wantIgn: true,
+		},
+		{
+			name:    "nested attribute sub-topic",
+			topic:   "ebus/5/dev-1/circuit-3/relay/$settable",
+			wantIgn: true,
+		},
+		{
+			name:     "relay state property still parses",
+			topic:    "ebus/5/dev-1/circuit-3/relay",
+			wantNode: "circuit-3",
+			wantProp: "relay",
+		},
+		{
 			name:   "wrong prefix",
 			topic:  "other/topic/completely",
 			wantNP: true,
@@ -66,10 +85,11 @@ func TestParseTopic(t *testing.T) {
 			wantNS: true,
 		},
 		{
-			name:     "deeply nested — only first slash matters",
-			topic:    "ebus/5/dev-1/node/prop/sub",
-			wantNode: "node",
-			wantProp: "prop/sub",
+			// A property with further slashes is a sub-topic, not state — it
+			// is ignored rather than parsed into an invalid "prop/" column.
+			name:    "deeply nested sub-topic is ignored",
+			topic:   "ebus/5/dev-1/node/prop/sub",
+			wantIgn: true,
 		},
 		{
 			name:   "empty rest",

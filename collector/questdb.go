@@ -293,6 +293,9 @@ func buildRowLine(table, deviceID string, extraSymbols map[string]string, props 
 	// Tags first: string properties designated as SYMBOL
 	for prop, val := range props {
 		col := propToColumn(prop)
+		if !isValidColumnName(col) {
+			continue
+		}
 		if str, ok := val.(string); ok && symbolProps[col] {
 			line.tag(col, str)
 		}
@@ -301,6 +304,13 @@ func buildRowLine(table, deviceID string, extraSymbols map[string]string, props 
 	// Fields: everything else
 	for prop, val := range props {
 		col := propToColumn(prop)
+
+		// Backstop: never emit a column QuestDB would reject (e.g. a leaked
+		// "relay/set" sub-topic → "relay/"). One invalid name aborts the entire
+		// table's batch, so skip it here even if the parser guard missed it.
+		if !isValidColumnName(col) {
+			continue
+		}
 
 		// Symbol strings were already emitted as tags above.
 		if _, ok := val.(string); ok && symbolProps[col] {
@@ -399,4 +409,28 @@ func (q *QuestDBWriter) Close() error {
 
 func propToColumn(prop string) string {
 	return strings.ReplaceAll(prop, "-", "_")
+}
+
+// isValidColumnName reports whether col is a safe QuestDB/ILP column identifier:
+// a leading letter or underscore followed by letters, digits, or underscores.
+// Legit Homie properties normalise to this (relay, active_power, l1_voltage);
+// leaked command/attribute sub-topics ("relay/set" → "relay/") do not, and must
+// be dropped so a single bad name can't reject the whole table's ILP batch.
+func isValidColumnName(col string) bool {
+	if col == "" {
+		return false
+	}
+	for i, r := range col {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r == '_':
+			// always allowed
+		case r >= '0' && r <= '9':
+			if i == 0 {
+				return false // may not start with a digit
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
