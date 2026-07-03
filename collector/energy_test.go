@@ -8,6 +8,17 @@ import (
 	"time"
 )
 
+// newTestEnergyTracker builds a tracker with the power ceiling effectively
+// disabled. Most energy tests advance the clock by only a couple of
+// milliseconds between readings, so even a few Wh imply megawatts of average
+// power — far above any realistic ceiling. Tests that specifically exercise the
+// ceiling construct their own tracker and set maxAvgWatts explicitly.
+func newTestEnergyTracker() *EnergyTracker {
+	tr := NewEnergyTracker(testLogger())
+	tr.maxAvgWatts = math.MaxFloat64
+	return tr
+}
+
 func TestGetFloat(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -40,7 +51,7 @@ func TestGetFloat(t *testing.T) {
 
 func TestEnergyTrackerFirstCallBaseline(t *testing.T) {
 	s := newPostDescState(t, time.Hour)
-	tracker := NewEnergyTracker(testLogger())
+	tracker := newTestEnergyTracker()
 
 	s.Update("lugs-upstream", "imported-energy", []byte("100.0"))
 	s.Update("lugs-upstream", "exported-energy", []byte("50.0"))
@@ -53,7 +64,7 @@ func TestEnergyTrackerFirstCallBaseline(t *testing.T) {
 
 func TestEnergyTrackerSecondCallDelta(t *testing.T) {
 	s := newPostDescState(t, time.Hour)
-	tracker := NewEnergyTracker(testLogger())
+	tracker := newTestEnergyTracker()
 
 	// First reading — baseline
 	s.Update("lugs-upstream", "imported-energy", []byte("100.0"))
@@ -105,7 +116,7 @@ func TestEnergyTrackerSecondCallDelta(t *testing.T) {
 
 func TestEnergyTrackerCounterReset(t *testing.T) {
 	s := newPostDescState(t, time.Hour)
-	tracker := NewEnergyTracker(testLogger())
+	tracker := newTestEnergyTracker()
 
 	s.Update("lugs-upstream", "imported-energy", []byte("100.0"))
 	s.Update("lugs-upstream", "exported-energy", []byte("50.0"))
@@ -123,33 +134,35 @@ func TestEnergyTrackerCounterReset(t *testing.T) {
 	}
 }
 
-// TestEnergyTrackerCounterResetRebasesBaseline verifies that after a counter
-// reset is detected, the next non-decreasing reading produces a correct delta
-// relative to the post-reset value — not relative to the pre-reset baseline.
-// (Regression guard for the cache-update ordering in Process.)
+// TestEnergyTrackerCounterResetRebasesBaseline verifies that a counter reset is
+// only accepted once the low value PERSISTS across resetConfirmReadings — and
+// that after rebase, the next non-decreasing reading produces a delta relative
+// to the post-reset value, not the pre-reset baseline. A single low reading must
+// NOT rebase (that is the transient-glitch case guarded by the spike fix).
 func TestEnergyTrackerCounterResetRebasesBaseline(t *testing.T) {
 	s := newPostDescState(t, time.Hour)
-	tracker := NewEnergyTracker(testLogger())
+	tracker := newTestEnergyTracker()
 
 	// Establish a high baseline.
 	s.Update("lugs-upstream", "imported-energy", []byte("1000.0"))
 	s.Update("lugs-upstream", "exported-energy", []byte("500.0"))
 	tracker.Process(s)
-	time.Sleep(2 * time.Millisecond)
 
-	// Counter reset to low values — no delta emitted, but baseline must be
-	// rebased to (10, 5) so the next reading is a small positive delta.
-	s.Update("lugs-upstream", "imported-energy", []byte("10.0"))
-	s.Update("lugs-upstream", "exported-energy", []byte("5.0"))
-	if d := tracker.Process(s); len(d) != 0 {
-		t.Fatalf("reset reading should produce no delta, got %d", len(d))
+	// Feed the low value repeatedly. Each reading below the baseline is treated
+	// as a transient dip (baseline preserved, no delta) until the streak reaches
+	// resetConfirmReadings, at which point the reset is confirmed and rebased.
+	for i := 0; i < resetConfirmReadings; i++ {
+		time.Sleep(2 * time.Millisecond)
+		s.Update("lugs-upstream", "imported-energy", []byte("10.0"))
+		s.Update("lugs-upstream", "exported-energy", []byte("5.0"))
+		if d := tracker.Process(s); len(d) != 0 {
+			t.Fatalf("low reading %d should produce no delta, got %d", i+1, len(d))
+		}
 	}
 	time.Sleep(2 * time.Millisecond)
 
-	// Next reading: should yield delta against (10, 5), NOT (1000, 500).
-	// If the cache had not been rebased, this reading (15, 7) would still
-	// be negative relative to the pre-reset baseline and be skipped — so
-	// asserting a non-empty delta proves rebase happened.
+	// Baseline is now rebased to (10, 5). This reading yields a delta against
+	// that, NOT against (1000, 500).
 	s.Update("lugs-upstream", "imported-energy", []byte("15.0"))
 	s.Update("lugs-upstream", "exported-energy", []byte("7.0"))
 	deltas := tracker.Process(s)
@@ -164,12 +177,91 @@ func TestEnergyTrackerCounterResetRebasesBaseline(t *testing.T) {
 	}
 }
 
+// TestEnergyTrackerTransientZeroDoesNotSpike is the direct regression guard for
+// the per-circuit energy spike (ENERGY-SPIKE-FINDINGS.md). A single transient
+// low/zero reading (e.g. a retained 0 republished on a panel reboot) followed by
+// recovery to the true lifetime cumulative must NOT emit a delta equal to that
+// cumulative. The baseline is preserved through the dip, so the recovery reading
+// is a no-op instead of a lifetime-sized spike.
+func TestEnergyTrackerTransientZeroDoesNotSpike(t *testing.T) {
+	s := newPostDescState(t, time.Hour)
+	tracker := newTestEnergyTracker()
+
+	const lifetime = 421439.2 // the Fridge's real lifetime cumulative from the incident
+
+	// Healthy baseline at the lifetime cumulative.
+	s.Update("fridge", "imported-energy", []byte("130.6"))
+	s.Update("fridge", "exported-energy", []byte(fmt.Sprintf("%f", lifetime)))
+	s.Update("fridge", "name", []byte("Fridge"))
+	tracker.Process(s)
+	time.Sleep(2 * time.Millisecond)
+
+	// Transient glitch: both counters momentarily read ~0.
+	s.Update("fridge", "imported-energy", []byte("0"))
+	s.Update("fridge", "exported-energy", []byte("0"))
+	if d := tracker.Process(s); len(d) != 0 {
+		t.Fatalf("transient zero must not emit a delta, got %+v", d)
+	}
+	time.Sleep(2 * time.Millisecond)
+
+	// Recovery: the true cumulative returns. Pre-fix this produced a delta of
+	// the ENTIRE lifetime; post-fix the preserved baseline makes it a no-op.
+	s.Update("fridge", "imported-energy", []byte("130.6"))
+	s.Update("fridge", "exported-energy", []byte(fmt.Sprintf("%f", lifetime)))
+	deltas := tracker.Process(s)
+	for _, d := range deltas {
+		if d.ExportedWh > 1000 || d.ImportedWh > 1000 {
+			t.Fatalf("recovery produced a spike delta: imported=%v exported=%v (lifetime=%v)",
+				d.ImportedWh, d.ExportedWh, lifetime)
+		}
+	}
+}
+
+// TestEnergyTrackerPowerCeilingRejectsSpike verifies the second guard: even if a
+// large positive delta reaches the emit path, an implied average power above the
+// node's ceiling is rejected (and the baseline rebased) rather than written.
+// A circuit with a breaker rating derives its ceiling from that rating.
+func TestEnergyTrackerPowerCeilingRejectsSpike(t *testing.T) {
+	s := newPostDescState(t, time.Hour)
+	// Use a real ceiling here (not the disabled test tracker).
+	tracker := NewEnergyTracker(testLogger())
+
+	// 40 A breaker → ceiling ≈ 40 * 240 * 1.5 = 14.4 kW.
+	s.Update("ev", "breaker-rating", []byte("40"))
+	s.Update("ev", "imported-energy", []byte("0"))
+	s.Update("ev", "exported-energy", []byte("100"))
+	tracker.Process(s)
+	time.Sleep(2 * time.Millisecond)
+
+	// A 5 kWh jump over ~2 ms implies gigawatts — far above the 14.4 kW ceiling.
+	s.Update("ev", "breaker-rating", []byte("40"))
+	s.Update("ev", "imported-energy", []byte("0"))
+	s.Update("ev", "exported-energy", []byte("5000"))
+	if d := tracker.Process(s); len(d) != 0 {
+		t.Fatalf("delta above the power ceiling must be rejected, got %+v", d)
+	}
+
+	// After rejection the baseline is rebased to 5000, so a subsequent modest,
+	// plausible increment (spread over a realistic period) is emitted normally.
+	time.Sleep(50 * time.Millisecond)
+	s.Update("ev", "breaker-rating", []byte("40"))
+	s.Update("ev", "imported-energy", []byte("0"))
+	s.Update("ev", "exported-energy", []byte("5000.1"))
+	d := tracker.Process(s)
+	if len(d) != 1 {
+		t.Fatalf("expected 1 plausible delta after rebase, got %d", len(d))
+	}
+	if math.Abs(d[0].ExportedWh-0.1) > 1e-6 {
+		t.Errorf("exported delta = %v, want 0.1 (5000.1 - rebased 5000)", d[0].ExportedWh)
+	}
+}
+
 // TestEnergyTrackerSkipsZeroDelta verifies that a reading where neither the
 // imported nor exported counter advanced produces NO delta — keeping the
 // power_usage table from filling with rows that contribute nothing.
 func TestEnergyTrackerSkipsZeroDelta(t *testing.T) {
 	s := newPostDescState(t, time.Hour)
-	tracker := NewEnergyTracker(testLogger())
+	tracker := newTestEnergyTracker()
 
 	s.Update("lugs-upstream", "imported-energy", []byte("100.0"))
 	s.Update("lugs-upstream", "exported-energy", []byte("50.0"))
@@ -187,11 +279,11 @@ func TestEnergyTrackerSkipsZeroDelta(t *testing.T) {
 }
 
 // TestEnergyTrackerEmitsWhenOnlyOneCounterMoves verifies that we still emit
-// a delta when only one of imported/exported changed — the user explicitly wants
-// asymmetric movement (e.g., importing without exporting) recorded.
+// a delta when only one of imported/exported changed — asymmetric movement
+// (e.g., importing without exporting) must still be recorded.
 func TestEnergyTrackerEmitsWhenOnlyOneCounterMoves(t *testing.T) {
 	s := newPostDescState(t, time.Hour)
-	tracker := NewEnergyTracker(testLogger())
+	tracker := newTestEnergyTracker()
 
 	s.Update("lugs-upstream", "imported-energy", []byte("100.0"))
 	s.Update("lugs-upstream", "exported-energy", []byte("50.0"))
@@ -223,7 +315,7 @@ func TestEnergyTrackerEmitsWhenOnlyOneCounterMoves(t *testing.T) {
 // late energy increment to a much longer period and underreport avg power.
 func TestEnergyTrackerZeroSkipDoesNotInflateNextPeriod(t *testing.T) {
 	s := newPostDescState(t, time.Hour)
-	tracker := NewEnergyTracker(testLogger())
+	tracker := newTestEnergyTracker()
 
 	s.Update("lugs-upstream", "imported-energy", []byte("100.0"))
 	s.Update("lugs-upstream", "exported-energy", []byte("50.0"))
@@ -257,7 +349,7 @@ func TestEnergyTrackerZeroSkipDoesNotInflateNextPeriod(t *testing.T) {
 
 func TestEnergyTrackerCircuitNode(t *testing.T) {
 	s := newPostDescState(t, time.Hour)
-	tracker := NewEnergyTracker(testLogger())
+	tracker := newTestEnergyTracker()
 
 	// Circuit node — not in knownNodes or energyNodeInfo
 	s.Update("abc123", "imported-energy", []byte("200.0"))
@@ -284,7 +376,7 @@ func TestEnergyTrackerCircuitNode(t *testing.T) {
 
 func TestEnergyTrackerCircuitNoName(t *testing.T) {
 	s := newPostDescState(t, time.Hour)
-	tracker := NewEnergyTracker(testLogger())
+	tracker := newTestEnergyTracker()
 
 	// Circuit without a name property — should use node ID
 	s.Update("hex-circuit", "imported-energy", []byte("100.0"))
@@ -307,7 +399,7 @@ func TestEnergyTrackerCircuitNoName(t *testing.T) {
 
 func TestEnergyTrackerSkipsSystemNodes(t *testing.T) {
 	s := newPostDescState(t, time.Hour)
-	tracker := NewEnergyTracker(testLogger())
+	tracker := newTestEnergyTracker()
 
 	// "core" is in knownNodes but NOT in energyNodeInfo → should be skipped
 	s.Update("core", "imported-energy", []byte("999.0"))
@@ -327,7 +419,7 @@ func TestEnergyTrackerSkipsSystemNodes(t *testing.T) {
 
 func TestEnergyTrackerNoEnergyProps(t *testing.T) {
 	s := newPostDescState(t, time.Hour)
-	tracker := NewEnergyTracker(testLogger())
+	tracker := newTestEnergyTracker()
 
 	s.Update("some-node", "voltage", []byte("120.0"))
 	s.Update("some-node", "current", []byte("5.0"))
@@ -340,7 +432,7 @@ func TestEnergyTrackerNoEnergyProps(t *testing.T) {
 
 func TestEnergyTrackerMultipleNodes(t *testing.T) {
 	s := newPostDescState(t, time.Hour)
-	tracker := NewEnergyTracker(testLogger())
+	tracker := newTestEnergyTracker()
 
 	// Baseline
 	s.Update("lugs-upstream", "imported-energy", []byte("100.0"))
@@ -392,7 +484,7 @@ func TestEnergyTrackerMultipleNodes(t *testing.T) {
 
 func TestEnergyTrackerRandomized(t *testing.T) {
 	s := newPostDescState(t, time.Hour)
-	tracker := NewEnergyTracker(testLogger())
+	tracker := newTestEnergyTracker()
 	r := rand.New(rand.NewSource(99))
 
 	const numCircuits = 10
