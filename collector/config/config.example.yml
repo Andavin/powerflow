@@ -37,6 +37,10 @@ questdb:
   http_port: 9000
   create_tables: true
   write_interval: "5s"
+  # Optional: directory where batches that fail to send during a QuestDB outage
+  # overflow to disk (in-memory retry always happens). Mount a volume to survive
+  # restarts. Empty = memory-only retry.
+  spool_dir: ""
 
 # Health / alerting (observability; the self-restart watchdog runs regardless)
 health:

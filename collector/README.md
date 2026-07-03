@@ -95,6 +95,9 @@ stop ingestion:
 - **Self-heal** — if QuestDB rejects a column (invalid name, or a type mismatch
   on an unpinned column), the collector quarantines just that column and keeps
   writing the rest of the table, instead of re-sending the poison every flush.
+- **Retry spool** — batches that fail to send during a QuestDB outage are
+  retained (in memory, overflowing to `questdb.spool_dir` on disk) and replayed
+  when it returns, so a restart/blip doesn't lose data. DEDUP makes replay safe.
 - **Watchdog** — the process exits for a supervisor restart on total MQTT
   silence *or* a table that keeps rejecting writes, so a stall self-recovers.
 - **`/healthz`** — reports per-table last-write and rejection streaks (200/503);

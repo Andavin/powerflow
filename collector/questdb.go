@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -190,6 +192,10 @@ type QuestDBWriter struct {
 	mu     sync.Mutex
 	health map[string]*tableHealth
 	nowFn  func() time.Time
+
+	// spool retains batches that failed to send (QuestDB unreachable) so a
+	// transient outage doesn't lose data — replayed on the next successful flush.
+	spool *retrySpool
 }
 
 // tableHealth tracks per-table write outcomes for the freshness watchdog and
@@ -207,16 +213,27 @@ var qdbHTTP = &http.Client{Timeout: 30 * time.Second}
 // /write endpoint). It does not dial: the HTTP client connects lazily on the
 // first flush, so a brief QuestDB outage at startup is not fatal.
 func NewQuestDBWriter(cfg QuestDBConfig, deviceID string, logger *slog.Logger) (*QuestDBWriter, error) {
+	log := logger.With("component", "questdb")
+
+	spoolPath := ""
+	if cfg.SpoolDir != "" {
+		if err := os.MkdirAll(cfg.SpoolDir, 0o755); err != nil {
+			return nil, fmt.Errorf("create spool dir %s: %w", cfg.SpoolDir, err)
+		}
+		spoolPath = filepath.Join(cfg.SpoolDir, "retry.ilp")
+	}
+
 	return &QuestDBWriter{
 		cfg:      cfg,
 		deviceID: deviceID,
 		// precision=n → line-protocol timestamps are nanoseconds (UnixNano).
 		writeURL:   fmt.Sprintf("http://%s:%d/write?precision=n", cfg.Host, cfg.HTTPPort),
-		logger:     logger.With("component", "questdb"),
+		logger:     log,
 		quarantine: make(map[string]map[string]bool),
 		pending:    make(map[string]bool),
 		health:     make(map[string]*tableHealth),
 		nowFn:      time.Now,
+		spool:      newRetrySpool(spoolPath, spoolMemCap, spoolFileCap, log),
 	}, nil
 }
 
@@ -296,7 +313,7 @@ func (q *QuestDBWriter) WriteEnergyDeltas(deltas []EnergyDelta) {
 // returns an error and the batch is lost; a data error (non-2xx) is logged with
 // QuestDB's message and swallowed so the healthy tables keep flowing.
 func (q *QuestDBWriter) Flush() error {
-	if q.buf.Len() == 0 {
+	if q.buf.Len() == 0 && !q.spool.pending() {
 		return nil
 	}
 
@@ -305,14 +322,23 @@ func (q *QuestDBWriter) Flush() error {
 	pending := q.pending
 	q.pending = make(map[string]bool)
 
-	resp, err := qdbHTTP.Post(q.writeURL, "text/plain; charset=utf-8", bytes.NewReader(q.buf.Bytes()))
+	// Prepend any batches that failed to send during an earlier outage so they
+	// replay ahead of the current one. DEDUP makes re-sending idempotent.
+	payload := q.spool.drain()
+	payload = append(payload, q.buf.Bytes()...)
 	q.buf.Reset()
+	if len(payload) == 0 {
+		return nil
+	}
+
+	resp, err := qdbHTTP.Post(q.writeURL, "text/plain; charset=utf-8", bytes.NewReader(payload))
 	if err != nil {
-		// Transport failure — QuestDB unreachable, whole batch lost. Leave
-		// per-table health untouched (these tables neither committed nor were
-		// rejected); the freshness of LastOK still ages, which the watchdog and
-		// /healthz surface. Retention across outages is the dead-letter's job.
-		return fmt.Errorf("ILP HTTP write to %s: %w (batch lost)", q.writeURL, err)
+		// Transport failure — QuestDB unreachable. Retain the whole payload
+		// (spooled + current) for replay instead of dropping it. Per-table
+		// health is left untouched (neither committed nor rejected); LastOK
+		// ages, which the watchdog and /healthz surface.
+		q.spool.enqueue(payload)
+		return fmt.Errorf("ILP HTTP write to %s: %w (batch queued for retry)", q.writeURL, err)
 	}
 	defer resp.Body.Close()
 

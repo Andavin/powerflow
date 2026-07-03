@@ -93,6 +93,10 @@ type QuestDBConfig struct {
 	HTTPPort      int    `yaml:"http_port"`
 	CreateTables  bool   `yaml:"create_tables"`
 	WriteInterval string `yaml:"write_interval"`
+	// SpoolDir, when set, is where batches that failed to send during a QuestDB
+	// outage overflow to disk (in-memory retry always happens). Empty keeps
+	// retries in memory only. Mount it on a volume to survive restarts.
+	SpoolDir string `yaml:"spool_dir"`
 
 	parsed time.Duration
 }
@@ -292,6 +296,7 @@ func applyEnvOverrides(cfg *Config) error {
 		return err
 	}
 	envStr("SPAN_QUESTDB_WRITE_INTERVAL", &cfg.QuestDB.WriteInterval)
+	envStr("SPAN_QUESTDB_SPOOL_DIR", &cfg.QuestDB.SpoolDir)
 	if err := envBool("SPAN_QUESTDB_CREATE_TABLES", &cfg.QuestDB.CreateTables); err != nil {
 		return err
 	}
