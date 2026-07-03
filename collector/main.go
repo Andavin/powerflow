@@ -26,6 +26,11 @@ const version = "5.0.0"
 const (
 	staleDataThreshold = 5 * time.Minute
 	staleCheckInterval = 30 * time.Second
+	// watchdogRejectExit is the per-table consecutive-rejection count at which
+	// the collector exits for a supervisor restart (self-heal should clear a
+	// bad column long before this; reaching it means the failure is persistent
+	// and unattributable). ~2 min at a 5s flush.
+	watchdogRejectExit = 24
 )
 
 // pendingWrite is a node snapshot queued for the next ILP flush.
@@ -202,9 +207,10 @@ func main() {
 	// needed here. Disconnect is called explicitly during graceful shutdown
 	// after the writer drains; no defer needed here.
 
-	// ---- Stale-data watchdog ------------------------------------------
+	// ---- Health endpoint + watchdog -----------------------------------
+	healthSrv := startHealthServer(cfg.Health.Port, qdbWriter, logger)
 	watchdogStop := make(chan struct{})
-	go runWatchdog(state, logger, watchdogStop)
+	go runWatchdog(state, qdbWriter, cfg.Health.AlertWebhook, logger, watchdogStop)
 
 	// ---- Signal handling ----------------------------------------------
 	sigCh := make(chan os.Signal, 1)
@@ -215,6 +221,9 @@ func main() {
 	sig := <-sigCh
 	logger.Info("shutting down", "signal", sig)
 	close(watchdogStop) // stop the watchdog before draining so it can't exit(1) mid-shutdown
+	if healthSrv != nil {
+		healthSrv.Close()
+	}
 	close(updateCh)
 	writerWg.Wait()
 	qdbWriter.Close()
@@ -246,26 +255,52 @@ func flushBatch(batch []pendingWrite, qdb *QuestDBWriter, energy *EnergyTracker,
 	)
 }
 
-// runWatchdog exits the process if no MQTT data has arrived for
-// staleDataThreshold, so a supervisor can restart and re-subscribe. It does
-// nothing until the first message is seen (lastUpdate is zero at startup while
-// waiting for $description), and returns when stop is closed during shutdown.
-func runWatchdog(state *State, logger *slog.Logger, stop <-chan struct{}) {
+// runWatchdog escalates two silent-failure modes a supervisor can recover from:
+//
+//  1. Total MQTT silence for staleDataThreshold (subscription went dead).
+//  2. A QuestDB table rejecting writes continuously — self-heal quarantines a
+//     bad column within a flush, so a streak that keeps climbing means the
+//     failure is unattributable/persistent and a restart is the last resort.
+//
+// It also emits degrade/recovery alerts (to alertWebhook, if configured) so a
+// partial stall is noticed in minutes rather than days. Returns when stop is
+// closed during shutdown.
+func runWatchdog(state *State, writer *QuestDBWriter, alertWebhook string, logger *slog.Logger, stop <-chan struct{}) {
 	ticker := time.NewTicker(staleCheckInterval)
 	defer ticker.Stop()
+	degraded := false
 	for {
 		select {
 		case <-stop:
 			return
 		case <-ticker.C:
-			_, _, _, last := state.Stats()
-			if last.IsZero() {
-				continue // no data yet — startup grace, don't trip the watchdog
+			// (1) Total silence — no MQTT at all.
+			if _, _, _, last := state.Stats(); !last.IsZero() {
+				if age := time.Since(last); age > staleDataThreshold {
+					logger.Error("no MQTT data received within threshold; exiting for supervisor restart",
+						"stale_for", age.Round(time.Second), "threshold", staleDataThreshold)
+					os.Exit(1)
+				}
 			}
-			if age := time.Since(last); age > staleDataThreshold {
-				logger.Error("no MQTT data received within threshold; exiting for supervisor restart",
-					"stale_for", age.Round(time.Second), "threshold", staleDataThreshold)
+
+			// (2) Per-table rejection stall.
+			table, streak := writer.worstStreak()
+			switch {
+			case streak >= watchdogRejectExit:
+				logger.Error("QuestDB table rejecting writes continuously; exiting for supervisor restart",
+					"table", table, "streak", streak)
+				postAlert(alertWebhook, "span-collector restarting",
+					fmt.Sprintf("table %s stuck rejecting (streak %d) — restarting", table, streak), logger)
 				os.Exit(1)
+			case streak >= healthDegradeStreak && !degraded:
+				degraded = true
+				logger.Error("QuestDB table degraded (rejecting writes)", "table", table, "streak", streak)
+				postAlert(alertWebhook, "span-collector degraded",
+					fmt.Sprintf("QuestDB table %s rejecting writes (streak %d)", table, streak), logger)
+			case streak < healthDegradeStreak && degraded:
+				degraded = false
+				logger.Info("QuestDB writes recovered")
+				postAlert(alertWebhook, "span-collector recovered", "QuestDB writes healthy again", logger)
 			}
 		}
 	}

@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -179,6 +180,25 @@ type QuestDBWriter struct {
 	// operator restart. Populated in Flush, read on the same writer goroutine
 	// when building rows.
 	quarantine map[string]map[string]bool
+
+	// pending is the set of tables written into the current buffer, so Flush
+	// knows which tables' health to update. Writer-goroutine-only.
+	pending map[string]bool
+
+	// mu guards health, which is read by the /healthz handler and watchdog on
+	// other goroutines. nowFn is overridable in tests.
+	mu     sync.Mutex
+	health map[string]*tableHealth
+	nowFn  func() time.Time
+}
+
+// tableHealth tracks per-table write outcomes for the freshness watchdog and
+// /healthz. A rising RejectStreak means the table's batch keeps being rejected
+// even after self-heal — the signal that a table has silently stalled.
+type tableHealth struct {
+	LastOK       time.Time `json:"last_ok"`
+	RejectStreak int       `json:"reject_streak"`
+	RejectTotal  uint64    `json:"reject_total"`
 }
 
 var qdbHTTP = &http.Client{Timeout: 30 * time.Second}
@@ -194,6 +214,9 @@ func NewQuestDBWriter(cfg QuestDBConfig, deviceID string, logger *slog.Logger) (
 		writeURL:   fmt.Sprintf("http://%s:%d/write?precision=n", cfg.Host, cfg.HTTPPort),
 		logger:     logger.With("component", "questdb"),
 		quarantine: make(map[string]map[string]bool),
+		pending:    make(map[string]bool),
+		health:     make(map[string]*tableHealth),
+		nowFn:      time.Now,
 	}, nil
 }
 
@@ -277,13 +300,23 @@ func (q *QuestDBWriter) Flush() error {
 		return nil
 	}
 
+	// Snapshot and reset the set of tables in this batch so we can attribute
+	// the outcome to them below.
+	pending := q.pending
+	q.pending = make(map[string]bool)
+
 	resp, err := qdbHTTP.Post(q.writeURL, "text/plain; charset=utf-8", bytes.NewReader(q.buf.Bytes()))
 	q.buf.Reset()
 	if err != nil {
+		// Transport failure — QuestDB unreachable, whole batch lost. Leave
+		// per-table health untouched (these tables neither committed nor were
+		// rejected); the freshness of LastOK still ages, which the watchdog and
+		// /healthz surface. Retention across outages is the dead-letter's job.
 		return fmt.Errorf("ILP HTTP write to %s: %w (batch lost)", q.writeURL, err)
 	}
 	defer resp.Body.Close()
 
+	rejected := map[string]bool{}
 	if resp.StatusCode/100 != 2 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
 		text := strings.TrimSpace(string(body))
@@ -292,22 +325,49 @@ func (q *QuestDBWriter) Flush() error {
 		// future flushes, instead of re-sending it forever and rejecting the
 		// table's batch every 5s (the failure mode that silently stalled the
 		// circuits table for ~36h).
-		newlyQuarantined := 0
 		for _, r := range parseColumnRejections(text) {
+			rejected[r.table] = true
 			if q.quarantineColumn(r.table, r.column) {
-				newlyQuarantined++
 				q.logger.Error("QuestDB rejected a column; quarantining it so the table recovers (drops just this column until restart)",
 					"table", r.table, "column", r.column)
 			}
 		}
-		if newlyQuarantined == 0 {
-			// Nothing parseable to quarantine — surface the raw error so it isn't
-			// silently retried forever.
-			q.logger.Error("QuestDB rejected ILP rows (isolated to the affected table)",
+		if len(rejected) == 0 {
+			// Non-2xx but nothing attributable — surface it, and count every
+			// table in the batch as rejected so a persistent unattributable
+			// failure still trips the watchdog rather than looking healthy.
+			q.logger.Error("QuestDB rejected ILP rows (unattributable)",
 				"status", resp.StatusCode, "response", text)
+			for t := range pending {
+				rejected[t] = true
+			}
 		}
 	}
+
+	q.recordFlush(pending, rejected)
 	return nil
+}
+
+// recordFlush updates per-table health after a flush: rejected tables advance
+// their reject streak, the rest are marked freshly committed.
+func (q *QuestDBWriter) recordFlush(pending, rejected map[string]bool) {
+	now := q.nowFn()
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for t := range pending {
+		h := q.health[t]
+		if h == nil {
+			h = &tableHealth{}
+			q.health[t] = h
+		}
+		if rejected[t] {
+			h.RejectStreak++
+			h.RejectTotal++
+		} else {
+			h.LastOK = now
+			h.RejectStreak = 0
+		}
+	}
 }
 
 // buildRowLine builds an ILP line for a system/circuit node row.
@@ -403,6 +463,7 @@ func (q *QuestDBWriter) writeRow(table string, extraSymbols map[string]string, p
 	props = q.dropQuarantined(table, props)
 	if s := buildRowLine(table, q.deviceID, extraSymbols, props, ts); s != "" {
 		q.buf.WriteString(s)
+		q.pending[table] = true
 	}
 }
 
@@ -414,12 +475,14 @@ func (q *QuestDBWriter) writeUnknownNode(nodeID string, props map[string]interfa
 	}
 	if s != "" {
 		q.buf.WriteString(s)
+		q.pending["unknown_topics"] = true
 	}
 }
 
 func (q *QuestDBWriter) writeEnergyDelta(d *EnergyDelta, ts time.Time) {
 	if s := buildEnergyDeltaLine(q.deviceID, d, ts); s != "" {
 		q.buf.WriteString(s)
+		q.pending["power_usage"] = true
 	}
 }
 
@@ -527,6 +590,49 @@ func (q *QuestDBWriter) dropQuarantined(table string, props map[string]interface
 		out[k] = v
 	}
 	return out
+}
+
+// ---------------------------------------------------------------------------
+// Health snapshot (read by the watchdog and /healthz on other goroutines)
+// ---------------------------------------------------------------------------
+
+// healthDegradeStreak is the consecutive per-table rejection count at which a
+// table is treated as degraded — i.e. it keeps failing even after self-heal. At
+// the default 5s flush that is ~1 minute of continuous rejection.
+const healthDegradeStreak = 12
+
+// HealthReport is a point-in-time view of writer health, served by /healthz.
+type HealthReport struct {
+	Healthy bool                   `json:"healthy"`
+	Tables  map[string]tableHealth `json:"tables"`
+}
+
+// worstStreak returns the table with the highest current reject streak.
+func (q *QuestDBWriter) worstStreak() (table string, streak int) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for t, h := range q.health {
+		if h.RejectStreak > streak {
+			streak, table = h.RejectStreak, t
+		}
+	}
+	return table, streak
+}
+
+// Health returns a copy of per-table health plus an overall flag that is false
+// when any table has been rejecting past the degrade threshold.
+func (q *QuestDBWriter) Health() HealthReport {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	tables := make(map[string]tableHealth, len(q.health))
+	healthy := true
+	for t, h := range q.health {
+		tables[t] = *h
+		if h.RejectStreak >= healthDegradeStreak {
+			healthy = false
+		}
+	}
+	return HealthReport{Healthy: healthy, Tables: tables}
 }
 
 // columnRejected reports whether col matches any quarantined name. A cast-error

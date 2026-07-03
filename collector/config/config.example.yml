@@ -38,6 +38,15 @@ questdb:
   create_tables: true
   write_interval: "5s"
 
+# Health / alerting (observability; the self-restart watchdog runs regardless)
+health:
+  # Port for GET /healthz (200 healthy, 503 when a table is rejecting writes).
+  # 0 disables the endpoint.
+  port: 0
+  # Optional: POSTed a short text alert on degrade/recovery. An
+  # https://ntfy.sh/<your-topic> URL gives a zero-config phone push. Empty = off.
+  alert_webhook: ""
+
 # Logging
 logging:
   level: "info"   # debug | info | warn | error

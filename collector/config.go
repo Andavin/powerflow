@@ -20,7 +20,19 @@ type Config struct {
 	MQTT    MQTTConfig    `yaml:"mqtt"`
 	Span    SpanConfig    `yaml:"span"`
 	QuestDB QuestDBConfig `yaml:"questdb"`
+	Health  HealthConfig  `yaml:"health"`
 	Logging LoggingConfig `yaml:"logging"`
+}
+
+// HealthConfig controls the observability endpoint and optional alerting.
+type HealthConfig struct {
+	// Port serves GET /healthz (200 healthy, 503 degraded). 0 disables it; the
+	// self-restart watchdog still runs regardless, so data-loss protection does
+	// not depend on this being enabled.
+	Port int `yaml:"port"`
+	// AlertWebhook, when set, is POSTed a short text alert on degrade/recovery
+	// (e.g. an https://ntfy.sh/<topic> URL for a phone push). Empty disables it.
+	AlertWebhook string `yaml:"alert_webhook"`
 }
 
 type MQTTConfig struct {
@@ -140,6 +152,15 @@ questdb:
   # How often to flush buffered updates to QuestDB
   # Go duration format: "1s", "5s", "30s", "1m", etc.
   write_interval: "5s"
+
+# Health / alerting (observability; the self-restart watchdog runs regardless)
+health:
+  # Port for GET /healthz (200 healthy, 503 when a table is rejecting writes).
+  # 0 disables the endpoint.
+  port: 0
+  # Optional: POSTed a short text alert on degrade/recovery. An
+  # https://ntfy.sh/<your-topic> URL gives a zero-config phone push. Empty = off.
+  alert_webhook: ""
 
 # Logging
 logging:
@@ -275,6 +296,11 @@ func applyEnvOverrides(cfg *Config) error {
 		return err
 	}
 
+	if err := envInt("SPAN_HEALTH_PORT", &cfg.Health.Port); err != nil {
+		return err
+	}
+	envStr("SPAN_ALERT_WEBHOOK", &cfg.Health.AlertWebhook)
+
 	envStr("SPAN_LOG_LEVEL", &cfg.Logging.Level)
 	envStr("SPAN_LOG_FORMAT", &cfg.Logging.Format)
 	return nil
@@ -340,6 +366,9 @@ func (c *Config) validate() error {
 	}
 	if c.QuestDB.HTTPPort < 1 || c.QuestDB.HTTPPort > 65535 {
 		return fmt.Errorf("questdb.http_port must be 1-65535")
+	}
+	if c.Health.Port != 0 && (c.Health.Port < 1 || c.Health.Port > 65535) {
+		return fmt.Errorf("health.port must be 0 (disabled) or 1-65535")
 	}
 	if c.QuestDB.parsed < 100*time.Millisecond {
 		return fmt.Errorf("questdb.write_interval must be >= 100ms")

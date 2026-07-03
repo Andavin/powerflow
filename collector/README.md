@@ -77,8 +77,28 @@ collector writes a template and exits so you can edit it. See
 | `span.readiness_grace` | How long to wait for all of a node's described properties before flushing its first row |
 | `questdb.host` / `http_port` | QuestDB (DDL + ILP-on-HTTP ingestion) |
 | `questdb.write_interval` | Flush cadence |
+| `health.port` | Port for `GET /healthz` (0 disables) |
+| `health.alert_webhook` | Optional URL POSTed on degrade/recovery (e.g. an `ntfy.sh` topic) |
 
-Secrets (`config.yml`, `ca.pem`) are gitignored and never committed.
+All keys can also be set via `SPAN_*` environment variables (e.g.
+`SPAN_DEVICE_ID`, `SPAN_HEALTH_PORT`), which override the file. Secrets
+(`config.yml`, `ca.pem`) are gitignored and never committed.
+
+## Resilience
+
+The collector is built so a single bad message or a QuestDB hiccup can't silently
+stop ingestion:
+
+- **Ingress filtering** — command/attribute sub-topics (`.../relay/set`) are
+  ignored, both by a narrowed `+/+` subscription and by `parseTopic`; only valid
+  single-segment properties become columns.
+- **Self-heal** — if QuestDB rejects a column (invalid name, or a type mismatch
+  on an unpinned column), the collector quarantines just that column and keeps
+  writing the rest of the table, instead of re-sending the poison every flush.
+- **Watchdog** — the process exits for a supervisor restart on total MQTT
+  silence *or* a table that keeps rejecting writes, so a stall self-recovers.
+- **`/healthz`** — reports per-table last-write and rejection streaks (200/503);
+  point an uptime monitor at it, or set `health.alert_webhook` for a push.
 
 ## Running
 
