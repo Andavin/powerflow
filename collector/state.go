@@ -418,6 +418,28 @@ func (s *State) Nodes() []string {
 	return nodes
 }
 
+// DescribedProperties returns the set of property IDs the $description declares
+// for a node, plus whether the node is described with a non-empty schema. Used
+// by the optional strict-schema filter to drop undeclared properties. Returns
+// (nil, false) for unknown/undescribed nodes so the caller leaves them untouched
+// (unknown nodes are captured wholesale in unknown_topics).
+func (s *State) DescribedProperties(nodeID string) (map[string]bool, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.description == nil {
+		return nil, false
+	}
+	schema, ok := s.description.Nodes[nodeID]
+	if !ok || len(schema.Properties) == 0 {
+		return nil, false
+	}
+	out := make(map[string]bool, len(schema.Properties))
+	for propID := range schema.Properties {
+		out[propID] = true
+	}
+	return out, true
+}
+
 // NodeValues returns a copy of all property values for a given node.
 func (s *State) NodeValues(node string) map[string]interface{} {
 	s.mu.RLock()

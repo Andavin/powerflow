@@ -97,6 +97,19 @@ var columnTypes = map[string]map[string]qType{
 	},
 }
 
+// allPinnedColumns returns every pinned column name across all tables. The
+// strict-schema filter unions this in so a pinned column (which powerflow may
+// depend on) is never dropped even if the panel's $description omits it.
+func allPinnedColumns() map[string]bool {
+	out := map[string]bool{}
+	for _, cols := range columnTypes {
+		for col := range cols {
+			out[col] = true
+		}
+	}
+	return out
+}
+
 // pinnedType returns the authoritative type for table.col, if one is pinned.
 func pinnedType(table, col string) (qType, bool) {
 	cols, ok := columnTypes[table]

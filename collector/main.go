@@ -118,6 +118,8 @@ func main() {
 	// Accumulates node updates and flushes to QuestDB on a timer.
 	var writerWg sync.WaitGroup
 	writerWg.Add(1)
+	strictSchema := cfg.Span.StrictSchema
+	pinnedCols := allPinnedColumns()
 	go func() {
 		defer writerWg.Done()
 		ticker := time.NewTicker(cfg.QuestDB.parsed)
@@ -131,13 +133,13 @@ func main() {
 			case pw, ok := <-updateCh:
 				if !ok {
 					// Channel closed — flush remaining and exit
-					flushBatch(batch, qdbWriter, energyTracker, state, logger, &flushCount)
+					flushBatch(batch, qdbWriter, energyTracker, state, strictSchema, pinnedCols, logger, &flushCount)
 					return
 				}
 				batch = append(batch, pw)
 
 			case <-ticker.C:
-				flushBatch(batch, qdbWriter, energyTracker, state, logger, &flushCount)
+				flushBatch(batch, qdbWriter, energyTracker, state, strictSchema, pinnedCols, logger, &flushCount)
 				batch = batch[:0]
 			}
 		}
@@ -231,13 +233,20 @@ func main() {
 	logger.Info("shutdown complete")
 }
 
-func flushBatch(batch []pendingWrite, qdb *QuestDBWriter, energy *EnergyTracker, state *State, logger *slog.Logger, count *uint64) {
+func flushBatch(batch []pendingWrite, qdb *QuestDBWriter, energy *EnergyTracker, state *State, strictSchema bool, pins map[string]bool, logger *slog.Logger, count *uint64) {
 	if len(batch) == 0 {
 		return
 	}
 
 	for _, pw := range batch {
-		qdb.WriteNodeUpdate(pw.nodeID, pw.props, pw.ts, state.IsDescribedNode(pw.nodeID))
+		props := pw.props
+		described := state.IsDescribedNode(pw.nodeID)
+		if strictSchema && described {
+			if declared, ok := state.DescribedProperties(pw.nodeID); ok {
+				props = filterToAllowed(pw.nodeID, props, declared, pins, logger)
+			}
+		}
+		qdb.WriteNodeUpdate(pw.nodeID, props, pw.ts, described)
 	}
 
 	deltas := energy.Process(state)
@@ -253,6 +262,27 @@ func flushBatch(batch []pendingWrite, qdb *QuestDBWriter, energy *EnergyTracker,
 		"updates", len(batch),
 		"deltas", len(deltas),
 	)
+}
+
+// filterToAllowed drops properties a described node published that its
+// $description does not declare, keeping declared properties, any pinned column,
+// and `name` (all of which powerflow / the type pins may depend on). Dropped
+// properties are logged so an operator can see what strict schema is removing.
+func filterToAllowed(nodeID string, props map[string]interface{}, declared, pins map[string]bool, logger *slog.Logger) map[string]interface{} {
+	out := make(map[string]interface{}, len(props))
+	var dropped []string
+	for k, v := range props {
+		col := propToColumn(k)
+		if declared[k] || pins[col] || col == "name" {
+			out[k] = v
+		} else {
+			dropped = append(dropped, k)
+		}
+	}
+	if len(dropped) > 0 {
+		logger.Debug("strict-schema dropped undeclared properties", "node", nodeID, "dropped", dropped)
+	}
+	return out
 }
 
 // runWatchdog escalates two silent-failure modes a supervisor can recover from:

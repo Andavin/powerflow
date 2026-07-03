@@ -27,6 +27,11 @@ span:
   # the node is marked "ready" with whatever has been received. Set "0" for
   # strict-only behavior (wait for every declared property forever).
   readiness_grace: "3s"
+  # Drop properties a described node publishes that its $description doesn't
+  # declare (prevents unexpected firmware fields creating columns). Pinned
+  # columns and `name` are always kept. Enable only after confirming the debug
+  # logs don't show a column you need being dropped.
+  strict_schema: false
 
 # QuestDB time-series database
 questdb:

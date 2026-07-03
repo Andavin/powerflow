@@ -64,6 +64,13 @@ type SpanConfig struct {
 	// panel never publishes will never flush).
 	ReadinessGrace string `yaml:"readiness_grace"`
 
+	// StrictSchema, when true, drops properties a described node publishes that
+	// its $description does not declare, so unexpected firmware fields can't
+	// auto-create columns on a typed table. Pinned columns and `name` are always
+	// kept (powerflow depends on them). Default false: enable only after
+	// confirming the logs don't show a column you need being dropped.
+	StrictSchema bool `yaml:"strict_schema"`
+
 	parsedReadinessGrace time.Duration
 }
 
@@ -287,6 +294,9 @@ func applyEnvOverrides(cfg *Config) error {
 	envStr("SPAN_TOPIC_PREFIX", &cfg.Span.TopicPrefix)
 	envStr("SPAN_DEVICE_ID", &cfg.Span.DeviceID)
 	envStr("SPAN_READINESS_GRACE", &cfg.Span.ReadinessGrace)
+	if err := envBool("SPAN_STRICT_SCHEMA", &cfg.Span.StrictSchema); err != nil {
+		return err
+	}
 
 	envStr("SPAN_QUESTDB_HOST", &cfg.QuestDB.Host)
 	if err := envInt("SPAN_QUESTDB_ILP_PORT", &cfg.QuestDB.ILPPort); err != nil {
