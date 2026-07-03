@@ -10,6 +10,7 @@ import {
   circuitEnergySql,
   circuitSeriesSql,
   flowTotalsSql,
+  freshnessSql,
 } from "./sql";
 import type { TimeWindow } from "./time";
 
@@ -127,5 +128,21 @@ describe("flowTotalsSql", () => {
     expect(sql).not.toContain("SAMPLE BY");
     expect(sql).toContain("avg(site)");
     expect(sql).toContain("count() n");
+  });
+});
+
+describe("freshnessSql", () => {
+  it("emits one max(ts) select per sentinel table, unioned", () => {
+    const sql = freshnessSql(["power_usage", "circuits"]);
+    expect(sql).toBe(
+      "SELECT 'power_usage' tbl, max(ts) ts FROM power_usage UNION ALL SELECT 'circuits' tbl, max(ts) ts FROM circuits",
+    );
+  });
+  it("defaults to the full sentinel set and excludes panel_bess", () => {
+    const sql = freshnessSql();
+    expect(sql).toContain("FROM power_usage");
+    expect(sql).toContain("FROM circuits");
+    expect(sql).toContain("FROM power_flows");
+    expect(sql).not.toContain("panel_bess");
   });
 });

@@ -33,6 +33,26 @@ export function latestDeviceSql(): string {
   return "SELECT device_id FROM power_flows LATEST ON ts PARTITION BY device_id";
 }
 
+/**
+ * Tables the collector writes on every cycle. If any of these has a stale
+ * `max(ts)`, ingestion (or that specific table) has stalled — a single-table
+ * check would miss a per-table failure like the circuits outage. `panel_bess`
+ * is deliberately excluded: it updates only every few minutes and would
+ * false-trip a one-minute staleness check.
+ */
+export const FRESHNESS_TABLES = [
+  "power_usage",
+  "circuits",
+  "power_flows",
+  "panel_core",
+  "panel_lugs",
+] as const;
+
+/** Latest write time per sentinel table — one row each: `tbl`, `ts`. */
+export function freshnessSql(tables: readonly string[] = FRESHNESS_TABLES): string {
+  return tables.map((t) => `SELECT '${t}' tbl, max(ts) ts FROM ${t}`).join(" UNION ALL ");
+}
+
 /** Latest instantaneous power-flow reading. */
 export function latestFlowSql(deviceId: string | null): string {
   const w = where([deviceEq(deviceId)]);
