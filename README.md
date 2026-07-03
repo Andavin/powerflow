@@ -113,19 +113,55 @@ fake client; Playwright runs the app in `mock` mode.
 
 ## Deploy (Docker)
 
-The image is a standalone Next.js server. `compose.yml` reaches a QuestDB that
-publishes port 9000 on the host via the host gateway (`host.docker.internal`),
-and reads secrets/config from `.env`:
+CI publishes a multi-arch image to **`ghcr.io/andavin/powerflow`** (tagged from
+`package.json`'s version — see `.github/workflows/docker-publish.yml`). You run
+that image rather than building locally.
 
-```bash
-cp .env.example .env
-# edit .env: set POWERFLOW_PASSWORD, POWERFLOW_SESSION_SECRET
-#   (e.g. openssl rand -hex 32), QUESTDB_URL, and the POWERFLOW_MQTT_* values.
+### As part of the span stack (recommended)
 
-docker compose up -d --build   # serves on http://<host>:3007
+Powerflow is designed to sit alongside the `span-collector` and `questdb`
+services in the parent `span-stats` compose, on one Docker network. That lets it
+reach QuestDB directly at `http://questdb:9000` (no host gateway) and share the
+panel's MQTT credentials + CA with the collector. A **single `.env`** is the
+source of truth for the whole stack:
+
+```dotenv
+# Images
+POWERFLOW_TAG=0.1.0            # pin a release; QUESTDB_TAG likewise
+# Panel + MQTT (shared by collector and Powerflow)
+PANEL_HOST=span-...-.local
+PANEL_IP=192.168.0.212
+DEVICE_ID=nj-...
+MQTT_USERNAME=...
+MQTT_PASSWORD=...
+MQTT_TOPIC_PREFIX=ebus/5
+# Powerflow auth
+POWERFLOW_PASSWORD=...
+POWERFLOW_SESSION_SECRET=...   # openssl rand -hex 32
+POWERFLOW_PORT=3007            # host port (-> container :3000)
 ```
 
-Reach it over your private network / Tailnet, and put it behind a
+The Powerflow service in that compose enables auth (`POWERFLOW_AUTH_DISABLED=0`)
+and breaker control (`POWERFLOW_CONTROL_ENABLED=1`), points
+`QUESTDB_URL` at `http://questdb:9000`, and mounts the panel CA read-only at
+`/config/ca.pem` (the same `ca.pem` the collector uses — fetch it once with the
+collector's `fetch-ca.sh`). Bring the stack up with:
+
+```bash
+cp .env.example .env          # fill in the secrets
+./collector/fetch-ca.sh       # grab the panel's MQTT CA (once)
+docker compose pull           # Powerflow image from GHCR
+docker compose up -d --build  # --build compiles the local collector
+```
+
+> The CA `ca.pem` must exist before `up`, or Docker will create a *directory*
+> in its place. `fetch-ca.sh` writes it for you.
+
+### Standalone
+
+Powerflow can also run on its own with the bundled `compose.yml`; set
+`QUESTDB_URL` and the `POWERFLOW_MQTT_*` values in `.env` yourself. Either way,
+reach it over your private network / Tailnet and put it behind a
 TLS-terminating reverse proxy if you want HTTPS.
 
 ## Layout

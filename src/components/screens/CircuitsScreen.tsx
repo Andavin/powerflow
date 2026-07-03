@@ -81,11 +81,7 @@ export function CircuitsScreen() {
               >
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium">{c.name}</span>
-                  {e ? (
-                    <span className="text-xs text-faint">{e.value} {e.unit} today</span>
-                  ) : (
-                    c.alwaysOn && <span className="text-xs text-faint">Always on</span>
-                  )}
+                  {e && <span className="text-xs text-faint">{e.value} {e.unit} today</span>}
                 </span>
                 <StatusPill on={c.isOn} />
                 <span className="w-20 text-right">
