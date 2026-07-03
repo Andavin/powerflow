@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -169,6 +170,15 @@ type QuestDBWriter struct {
 	deviceID string
 	writeURL string
 	logger   *slog.Logger
+
+	// quarantine holds columns QuestDB rejected (invalid name, or a type
+	// mismatch on an unpinned column), keyed table -> reported column name. A
+	// rejected column is re-emitted from cached node state on every flush and
+	// would reject that table's whole batch indefinitely; dropping it lets the
+	// table's other columns keep flowing and recovers the table with no
+	// operator restart. Populated in Flush, read on the same writer goroutine
+	// when building rows.
+	quarantine map[string]map[string]bool
 }
 
 var qdbHTTP = &http.Client{Timeout: 30 * time.Second}
@@ -181,8 +191,9 @@ func NewQuestDBWriter(cfg QuestDBConfig, deviceID string, logger *slog.Logger) (
 		cfg:      cfg,
 		deviceID: deviceID,
 		// precision=n → line-protocol timestamps are nanoseconds (UnixNano).
-		writeURL: fmt.Sprintf("http://%s:%d/write?precision=n", cfg.Host, cfg.HTTPPort),
-		logger:   logger.With("component", "questdb"),
+		writeURL:   fmt.Sprintf("http://%s:%d/write?precision=n", cfg.Host, cfg.HTTPPort),
+		logger:     logger.With("component", "questdb"),
+		quarantine: make(map[string]map[string]bool),
 	}, nil
 }
 
@@ -274,9 +285,27 @@ func (q *QuestDBWriter) Flush() error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode/100 != 2 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		q.logger.Error("QuestDB rejected ILP rows (isolated to the affected table)",
-			"status", resp.StatusCode, "response", strings.TrimSpace(string(body)))
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
+		text := strings.TrimSpace(string(body))
+
+		// Self-heal: quarantine every column QuestDB named so it is dropped from
+		// future flushes, instead of re-sending it forever and rejecting the
+		// table's batch every 5s (the failure mode that silently stalled the
+		// circuits table for ~36h).
+		newlyQuarantined := 0
+		for _, r := range parseColumnRejections(text) {
+			if q.quarantineColumn(r.table, r.column) {
+				newlyQuarantined++
+				q.logger.Error("QuestDB rejected a column; quarantining it so the table recovers (drops just this column until restart)",
+					"table", r.table, "column", r.column)
+			}
+		}
+		if newlyQuarantined == 0 {
+			// Nothing parseable to quarantine — surface the raw error so it isn't
+			// silently retried forever.
+			q.logger.Error("QuestDB rejected ILP rows (isolated to the affected table)",
+				"status", resp.StatusCode, "response", text)
+		}
 	}
 	return nil
 }
@@ -371,6 +400,7 @@ func buildEnergyDeltaLine(deviceID string, d *EnergyDelta, ts time.Time) string 
 }
 
 func (q *QuestDBWriter) writeRow(table string, extraSymbols map[string]string, props map[string]interface{}, ts time.Time) {
+	props = q.dropQuarantined(table, props)
 	if s := buildRowLine(table, q.deviceID, extraSymbols, props, ts); s != "" {
 		q.buf.WriteString(s)
 	}
@@ -409,6 +439,118 @@ func (q *QuestDBWriter) Close() error {
 
 func propToColumn(prop string) string {
 	return strings.ReplaceAll(prop, "-", "_")
+}
+
+// ---------------------------------------------------------------------------
+// Self-heal: quarantine columns QuestDB rejects
+// ---------------------------------------------------------------------------
+
+type ilpRejection struct{ table, column string }
+
+var (
+	reRejectTable   = regexp.MustCompile(`table:\s*([A-Za-z_][A-Za-z0-9_]*)`)
+	reRejectBadName = regexp.MustCompile(`invalid column name:\s*([^\s"]+)`)
+	reRejectCastCol = regexp.MustCompile(`column:\s*([A-Za-z_][A-Za-z0-9_]*)`)
+)
+
+// parseColumnRejections extracts (table, column) pairs from a QuestDB ILP-HTTP
+// error body. QuestDB reports one error per bad line, e.g.
+//
+//	error in line 1: table: circuits; invalid column name: relay/
+//	error in line 2: table: panel_core, column: postal_code; cast error ...
+//
+// so we split on "error in line" and read the table plus either an invalid
+// column name or a cast-error column from each segment.
+func parseColumnRejections(body string) []ilpRejection {
+	// QuestDB returns JSON whose "message" carries the per-line errors with
+	// escaped newlines. Decode it so `\n` becomes real whitespace that the
+	// column regexes stop on; fall back to the raw body if it isn't JSON.
+	text := body
+	var parsed struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(body), &parsed); err == nil && parsed.Message != "" {
+		text = parsed.Message
+	}
+
+	var out []ilpRejection
+	seen := map[string]bool{}
+	for _, seg := range strings.Split(text, "error in line") {
+		tm := reRejectTable.FindStringSubmatch(seg)
+		if tm == nil {
+			continue
+		}
+		var col string
+		if m := reRejectBadName.FindStringSubmatch(seg); m != nil {
+			col = m[1]
+		} else if m := reRejectCastCol.FindStringSubmatch(seg); m != nil {
+			col = m[1]
+		}
+		if col == "" {
+			continue
+		}
+		key := tm[1] + "\x00" + col
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, ilpRejection{table: tm[1], column: col})
+	}
+	return out
+}
+
+// quarantineColumn records table.column as rejected. Returns true if this is
+// newly quarantined (so the caller only logs the first time).
+func (q *QuestDBWriter) quarantineColumn(table, col string) bool {
+	if q.quarantine[table] == nil {
+		q.quarantine[table] = map[string]bool{}
+	}
+	if q.quarantine[table][col] {
+		return false
+	}
+	q.quarantine[table][col] = true
+	return true
+}
+
+// dropQuarantined returns props without any column QuestDB has rejected for
+// this table. Fast path: unchanged when nothing is quarantined for the table.
+func (q *QuestDBWriter) dropQuarantined(table string, props map[string]interface{}) map[string]interface{} {
+	bad := q.quarantine[table]
+	if len(bad) == 0 {
+		return props
+	}
+	out := make(map[string]interface{}, len(props))
+	for k, v := range props {
+		if columnRejected(propToColumn(k), bad) {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// columnRejected reports whether col matches any quarantined name. A cast-error
+// name is a full valid identifier (exact match). An invalid-name is truncated
+// by QuestDB at its first invalid char (e.g. "relay/" for our "relay/set"), so
+// when a quarantined name ends in a non-identifier char we match by prefix.
+func columnRejected(col string, bad map[string]bool) bool {
+	if bad[col] {
+		return true
+	}
+	for q := range bad {
+		if q == "" {
+			continue
+		}
+		last := q[len(q)-1]
+		identChar := last == '_' ||
+			(last >= 'a' && last <= 'z') ||
+			(last >= 'A' && last <= 'Z') ||
+			(last >= '0' && last <= '9')
+		if !identChar && strings.HasPrefix(col, q) {
+			return true
+		}
+	}
+	return false
 }
 
 // isValidColumnName reports whether col is a safe QuestDB/ILP column identifier:
