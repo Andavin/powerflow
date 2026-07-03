@@ -1,0 +1,44 @@
+# ============================================================
+# SPAN Panel Data Collector — Example Configuration
+# ============================================================
+# Copy this file to config/config.yml and fill in your values.
+# config.yml and *.pem are gitignored so your secrets stay local.
+# (The collector also writes a default template on first run if the
+# config file is missing.)
+
+# MQTT broker connection (the SPAN panel's local broker)
+mqtt:
+  server: "mqtt.example.com"
+  port: 8883
+  client_id: "span-collector-01"
+  username: ""
+  password: ""
+  # Path to CA certificate (PEM) for TLS. Leave empty for plain TCP.
+  # When using Docker, mount your ca.pem into /config/
+  ca_cert: "/config/ca.pem"
+
+# SPAN panel data source
+span:
+  # MQTT topic prefix where the SPAN panel publishes (Homie 5.0)
+  topic_prefix: "ebus/5"
+  # SPAN panel device ID (serial number) — replace with your panel's serial
+  device_id: "REPLACE-WITH-YOUR-PANEL-SERIAL"
+  # How long to wait for every described property of a node to arrive before
+  # the node is marked "ready" with whatever has been received. Set "0" for
+  # strict-only behavior (wait for every declared property forever).
+  readiness_grace: "3s"
+
+# QuestDB time-series database
+questdb:
+  host: "questdb"
+  # Retained for backwards compatibility; ingestion now uses HTTP (below).
+  ilp_port: 9009
+  # HTTP API port — used for DDL (table creation) AND ILP-on-HTTP ingestion.
+  http_port: 9000
+  create_tables: true
+  write_interval: "5s"
+
+# Logging
+logging:
+  level: "info"   # debug | info | warn | error
+  format: "text"  # text | json
