@@ -73,7 +73,7 @@ func main() {
 		"broker", cfg.MQTT.BrokerURL(),
 		"client_id", cfg.MQTT.ClientID,
 		"device_id", cfg.Span.DeviceID,
-		"subscribe", cfg.Span.SubscribeTopic(),
+		"subscribe", cfg.Span.SubscribeTopics(),
 		"flush_interval", cfg.QuestDB.WriteInterval,
 		"questdb", fmt.Sprintf("http://%s:%d/write", cfg.QuestDB.Host, cfg.QuestDB.HTTPPort),
 		"tls", cfg.MQTT.CACert != "",
@@ -313,28 +313,33 @@ func createMQTTClient(cfg *Config, logger *slog.Logger, msgHandler mqtt.MessageH
 	// per-subscription handler can be nil since this is the only subscription.
 	opts.SetDefaultPublishHandler(msgHandler)
 
-	subTopic := cfg.Span.SubscribeTopic()
+	subTopics := cfg.Span.SubscribeTopics()
+	filters := make(map[string]byte, len(subTopics))
+	for _, t := range subTopics {
+		filters[t] = 1 // QoS 1
+	}
 
 	// OnConnect fires on initial connect AND every reconnect. Subscribing
 	// here (instead of once at startup) guarantees the subscription is
 	// re-established after the panel's daily TLS-rotation disconnect.
 	// CleanSession defaults to true, so the broker forgets subscriptions
 	// across drops; without this re-subscribe we'd reconnect cleanly but
-	// receive nothing.
+	// receive nothing. SubscribeMultiple registers both `+` filters in one
+	// SUBSCRIBE so the two-topic narrowing survives every reconnect too.
 	opts.SetOnConnectHandler(func(c mqtt.Client) {
 		logger.Info("MQTT connected", "broker", cfg.MQTT.BrokerURL())
 
-		token := c.Subscribe(subTopic, 1, nil)
+		token := c.SubscribeMultiple(filters, nil)
 		if !token.WaitTimeout(subscribeTimeout) {
 			logger.Error("MQTT subscribe timed out — no SUBACK from broker",
-				"topic", subTopic, "timeout", subscribeTimeout)
+				"topics", subTopics, "timeout", subscribeTimeout)
 			return
 		}
 		if err := token.Error(); err != nil {
-			logger.Error("MQTT subscribe failed", "topic", subTopic, "error", err)
+			logger.Error("MQTT subscribe failed", "topics", subTopics, "error", err)
 			return
 		}
-		logger.Info("MQTT subscribed", "topic", subTopic)
+		logger.Info("MQTT subscribed", "topics", subTopics)
 	})
 	opts.SetConnectionLostHandler(func(_ mqtt.Client, err error) {
 		logger.Warn("MQTT connection lost (auto-reconnect enabled)", "error", err)

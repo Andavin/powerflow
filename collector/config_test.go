@@ -25,11 +25,24 @@ func TestBrokerURL(t *testing.T) {
 	}
 }
 
-func TestSubscribeTopic(t *testing.T) {
+func TestSubscribeTopics(t *testing.T) {
 	cfg := SpanConfig{TopicPrefix: "ebus/5", DeviceID: "dev-123"}
-	want := "ebus/5/dev-123/#"
-	if got := cfg.SubscribeTopic(); got != want {
-		t.Errorf("SubscribeTopic() = %q, want %q", got, want)
+	got := cfg.SubscribeTopics()
+	want := []string{"ebus/5/dev-123/+", "ebus/5/dev-123/+/+"}
+	if len(got) != len(want) {
+		t.Fatalf("SubscribeTopics() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("SubscribeTopics()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+	// Neither filter may use the multi-level '#' wildcard (that would let
+	// 3-level command sub-topics like <node>/<property>/set through again).
+	for _, f := range got {
+		if strings.ContainsRune(f, '#') {
+			t.Errorf("filter %q must not contain '#'", f)
+		}
 	}
 }
 

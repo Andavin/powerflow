@@ -55,8 +55,20 @@ type SpanConfig struct {
 	parsedReadinessGrace time.Duration
 }
 
-func (s *SpanConfig) SubscribeTopic() string {
-	return s.TopicPrefix + "/" + s.DeviceID + "/#"
+// SubscribeTopics returns the MQTT topic filters the collector subscribes to.
+// Two single-level (`+`) filters instead of one multi-level (`#`) wildcard:
+//
+//   - "<prefix>/<device>/+"    device-level attributes ($state, $description)
+//   - "<prefix>/<device>/+/+"  node property values (<node>/<property>)
+//
+// A property value in Homie 5 is always exactly <node>/<property> (2 levels),
+// so this structurally excludes 3-level command/attribute sub-topics such as
+// "<node>/<property>/set" — the poison topics never reach the collector. This
+// is a transport-layer second layer; parseTopic's guard and the ILP
+// column-name validation remain the authoritative defense.
+func (s *SpanConfig) SubscribeTopics() []string {
+	base := s.TopicPrefix + "/" + s.DeviceID
+	return []string{base + "/+", base + "/+/+"}
 }
 
 func (s *SpanConfig) TopicBase() string {
