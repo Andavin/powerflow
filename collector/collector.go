@@ -16,7 +16,7 @@ import (
 // since CleanSession=true means the broker forgets subscriptions on drop).
 type Collector struct {
 	state     *State
-	topicBase string // e.g. "ebus/5/REPLACE-WITH-YOUR-PANEL-SERIAL/"
+	topicBase string // e.g. "ebus/5/<panel-serial>/"
 	logger    *slog.Logger
 	onUpdate  func(UpdateResult) // called after each state update when ready
 }
