@@ -18,8 +18,14 @@ name: Publish Docker image
 on:
   push:
     branches: [main]
+    # The Go collector lives in collector/ with its own CI; a collector-only
+    # change shouldn't rebuild the web image.
+    paths-ignore:
+      - "collector/**"
   pull_request:
     branches: [main]
+    paths-ignore:
+      - "collector/**"
   workflow_dispatch:
 
 env:

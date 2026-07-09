@@ -1,10 +1,10 @@
-# span-stats
+# Powerflow Collector
 
 A small, dependency-light Go service that subscribes to a **SPAN smart panel's
 MQTT feed** (Homie 5.0 convention), snapshots the panel state, and writes
-structured time-series data to **QuestDB**. It is the ingestion half of a pair:
-the [`powerflow`](https://github.com/Andavin/powerflow) dashboard reads the
-QuestDB tables this collector produces.
+structured time-series data to **QuestDB**. It is the ingestion half of the
+stack: the Powerflow dashboard (this repository's root) reads the QuestDB
+tables this collector produces.
 
 > [!NOTE]
 > **Meant to run on a private network.** This connects to a panel-local MQTT
@@ -124,4 +124,4 @@ dependencies; all SQL/ILP building and parsing is unit-tested.
 
 ## License
 
-[MIT](./LICENSE)
+[Apache 2.0](../LICENSE) — covers this whole repository.
