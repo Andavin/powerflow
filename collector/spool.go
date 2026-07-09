@@ -1,0 +1,114 @@
+package main
+
+import (
+	"log/slog"
+	"os"
+	"sync"
+)
+
+const (
+	spoolMemCap  = 32 << 20  // 32 MiB kept in memory before spilling to disk
+	spoolFileCap = 256 << 20 // 256 MiB on-disk overflow cap
+)
+
+// retrySpool retains ILP batches that failed to send because QuestDB was
+// unreachable (a transport failure, where the whole batch is lost), so they can
+// be replayed when it returns instead of being dropped. Recent batches stay in
+// memory; once the in-memory total exceeds memCap the oldest spill to a single
+// append-only file (when a dir is configured), itself capped so a long outage
+// can't fill the disk. QuestDB's DEDUP UPSERT KEYS make replay idempotent, so
+// re-sending a batch that partially landed is safe.
+//
+// A QuestDB dead-letter *table* was considered and rejected: the failure this
+// guards against is "QuestDB unavailable", so only local durability survives it.
+type retrySpool struct {
+	mu      sync.Mutex
+	batches [][]byte // in-memory FIFO of pending batches
+	memSize int
+	memCap  int
+	path    string // append file for overflow; "" disables disk overflow
+	fileCap int
+	logger  *slog.Logger
+}
+
+func newRetrySpool(path string, memCap, fileCap int, logger *slog.Logger) *retrySpool {
+	return &retrySpool{memCap: memCap, path: path, fileCap: fileCap, logger: logger}
+}
+
+// enqueue retains a failed batch for later replay, spilling oldest in-memory
+// batches to disk (or dropping them, logged) when the memory cap is exceeded.
+func (s *retrySpool) enqueue(batch []byte) {
+	if len(batch) == 0 {
+		return
+	}
+	b := append([]byte(nil), batch...)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.batches = append(s.batches, b)
+	s.memSize += len(b)
+	for s.memSize > s.memCap && len(s.batches) > 1 {
+		oldest := s.batches[0]
+		s.batches = s.batches[1:]
+		s.memSize -= len(oldest)
+		s.spillToDisk(oldest)
+	}
+}
+
+// spillToDisk appends a batch to the overflow file, honoring the file cap. Must
+// hold s.mu. Loss (disk disabled or file full) is logged, never silent.
+func (s *retrySpool) spillToDisk(batch []byte) {
+	if s.path == "" {
+		s.logger.Warn("retry buffer full and no spool dir; dropping oldest batch", "bytes", len(batch))
+		return
+	}
+	if fi, err := os.Stat(s.path); err == nil && int(fi.Size())+len(batch) > s.fileCap {
+		s.logger.Warn("retry spool file full; dropping oldest batch", "bytes", len(batch), "file", s.path)
+		return
+	}
+	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		s.logger.Warn("cannot open retry spool file; dropping oldest batch", "error", err)
+		return
+	}
+	defer f.Close()
+	if _, err := f.Write(batch); err != nil {
+		s.logger.Warn("cannot write retry spool file; dropping oldest batch", "error", err)
+	}
+}
+
+// drain returns every pending batch (disk first, then memory, oldest-first)
+// concatenated for a single replay POST, and clears the spool. The caller
+// re-enqueues the whole thing if the replay also fails.
+func (s *retrySpool) drain() []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var out []byte
+	if s.path != "" {
+		if data, err := os.ReadFile(s.path); err == nil && len(data) > 0 {
+			out = append(out, data...)
+		}
+		os.Remove(s.path)
+	}
+	for _, b := range s.batches {
+		out = append(out, b...)
+	}
+	s.batches = nil
+	s.memSize = 0
+	return out
+}
+
+// pending reports whether any batches are awaiting replay (memory or disk).
+func (s *retrySpool) pending() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.batches) > 0 {
+		return true
+	}
+	if s.path != "" {
+		if fi, err := os.Stat(s.path); err == nil && fi.Size() > 0 {
+			return true
+		}
+	}
+	return false
+}

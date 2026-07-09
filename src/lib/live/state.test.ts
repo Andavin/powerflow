@@ -7,24 +7,24 @@ import {
 } from "./state";
 
 const PREFIX = "ebus/5";
-const DEV = "nj-2338-00fq1";
+const DEV = "ab-1234-00xy1";
 const apply = (s: ReturnType<typeof emptyLiveState>, topic: string, payload: string) =>
   applyMessage(s, PREFIX, DEV, topic, payload);
 
 describe("applyMessage — power-flows", () => {
   it("captures the four flow channels with raw signs", () => {
     const s = emptyLiveState();
-    expect(apply(s, "ebus/5/nj-2338-00fq1/power-flows/site", "5274.4")).toBe(true);
-    apply(s, "ebus/5/nj-2338-00fq1/power-flows/grid", "-7");
-    apply(s, "ebus/5/nj-2338-00fq1/power-flows/pv", "-2192.4");
-    apply(s, "ebus/5/nj-2338-00fq1/power-flows/battery", "-3075");
+    expect(apply(s, "ebus/5/ab-1234-00xy1/power-flows/site", "5274.4")).toBe(true);
+    apply(s, "ebus/5/ab-1234-00xy1/power-flows/grid", "-7");
+    apply(s, "ebus/5/ab-1234-00xy1/power-flows/pv", "-2192.4");
+    apply(s, "ebus/5/ab-1234-00xy1/power-flows/battery", "-3075");
     expect(s.flow).toEqual({ site: 5274.4, grid: -7, pv: -2192.4, battery: -3075 });
     expect(isFlowReady(s)).toBe(true);
   });
 
   it("is not ready until all four channels are present", () => {
     const s = emptyLiveState();
-    apply(s, "ebus/5/nj-2338-00fq1/power-flows/site", "100");
+    apply(s, "ebus/5/ab-1234-00xy1/power-flows/site", "100");
     expect(isFlowReady(s)).toBe(false);
   });
 });
@@ -32,8 +32,8 @@ describe("applyMessage — power-flows", () => {
 describe("applyMessage — bess", () => {
   it("coerces soc to number and connected to boolean", () => {
     const s = emptyLiveState();
-    apply(s, "ebus/5/nj-2338-00fq1/bess/soc", "56.2");
-    apply(s, "ebus/5/nj-2338-00fq1/bess/connected", "false");
+    apply(s, "ebus/5/ab-1234-00xy1/bess/soc", "56.2");
+    apply(s, "ebus/5/ab-1234-00xy1/bess/connected", "false");
     expect(s.bess.soc).toBe(56.2);
     // "false" must become boolean false, not truthy string.
     expect(s.bess.connected).toBe(false);
@@ -42,7 +42,7 @@ describe("applyMessage — bess", () => {
   it("normalises hyphenated property names to underscores", () => {
     const s = emptyLiveState();
     // The panel publishes `grid-state`, not `grid_state`.
-    apply(s, "ebus/5/nj-2338-00fq1/bess/grid-state", "ON_GRID");
+    apply(s, "ebus/5/ab-1234-00xy1/bess/grid-state", "ON_GRID");
     expect(s.bess.grid_state).toBe("ON_GRID");
   });
 });
@@ -50,25 +50,25 @@ describe("applyMessage — bess", () => {
 describe("applyMessage — circuits", () => {
   it("negates a circuit's active-power into positive draw (hyphenated topic)", () => {
     const s = emptyLiveState();
-    apply(s, "ebus/5/nj-2338-00fq1/abc123/active-power", "-3965.5");
+    apply(s, "ebus/5/ab-1234-00xy1/abc123/active-power", "-3965.5");
     expect(s.circuitWatts.get("abc123")).toBe(3966);
   });
 
   it("ignores active-power from system nodes (e.g. lugs)", () => {
     const s = emptyLiveState();
-    expect(apply(s, "ebus/5/nj-2338-00fq1/lugs-upstream/active-power", "-50")).toBe(false);
+    expect(apply(s, "ebus/5/ab-1234-00xy1/lugs-upstream/active-power", "-50")).toBe(false);
     expect(s.circuitWatts.size).toBe(0);
   });
 
   it("captures circuit relay state", () => {
     const s = emptyLiveState();
-    expect(apply(s, "ebus/5/nj-2338-00fq1/abc123/relay", "open")).toBe(true);
+    expect(apply(s, "ebus/5/ab-1234-00xy1/abc123/relay", "open")).toBe(true);
     expect(s.circuitRelay.get("abc123")).toBe("OPEN");
   });
 
   it("ignores unrelated circuit properties", () => {
     const s = emptyLiveState();
-    expect(apply(s, "ebus/5/nj-2338-00fq1/abc123/breaker_rating", "20")).toBe(false);
+    expect(apply(s, "ebus/5/ab-1234-00xy1/abc123/breaker_rating", "20")).toBe(false);
   });
 });
 
@@ -76,8 +76,8 @@ describe("applyMessage — rejects", () => {
   it("ignores other devices and Homie attributes", () => {
     const s = emptyLiveState();
     expect(apply(s, "ebus/5/other-device/power-flows/site", "1")).toBe(false);
-    expect(apply(s, "ebus/5/nj-2338-00fq1/power-flows/$name", "Power Flows")).toBe(false);
-    expect(apply(s, "ebus/5/nj-2338-00fq1/abc123/active_power/$target", "x")).toBe(false);
+    expect(apply(s, "ebus/5/ab-1234-00xy1/power-flows/$name", "Power Flows")).toBe(false);
+    expect(apply(s, "ebus/5/ab-1234-00xy1/abc123/active_power/$target", "x")).toBe(false);
   });
 });
 
@@ -98,14 +98,14 @@ describe("buildSnapshot", () => {
 
   it("normalises flow signs, ranks top consumers, and lists circuits", () => {
     const s = emptyLiveState();
-    apply(s, "ebus/5/nj-2338-00fq1/power-flows/site", "5274");
-    apply(s, "ebus/5/nj-2338-00fq1/power-flows/grid", "-7");
-    apply(s, "ebus/5/nj-2338-00fq1/power-flows/pv", "-2192");
-    apply(s, "ebus/5/nj-2338-00fq1/power-flows/battery", "-3075");
-    apply(s, "ebus/5/nj-2338-00fq1/bess/soc", "56");
-    apply(s, "ebus/5/nj-2338-00fq1/ev/active-power", "-3965");
-    apply(s, "ebus/5/nj-2338-00fq1/fridge/active-power", "-120");
-    apply(s, "ebus/5/nj-2338-00fq1/fridge/relay", "OPEN");
+    apply(s, "ebus/5/ab-1234-00xy1/power-flows/site", "5274");
+    apply(s, "ebus/5/ab-1234-00xy1/power-flows/grid", "-7");
+    apply(s, "ebus/5/ab-1234-00xy1/power-flows/pv", "-2192");
+    apply(s, "ebus/5/ab-1234-00xy1/power-flows/battery", "-3075");
+    apply(s, "ebus/5/ab-1234-00xy1/bess/soc", "56");
+    apply(s, "ebus/5/ab-1234-00xy1/ev/active-power", "-3965");
+    apply(s, "ebus/5/ab-1234-00xy1/fridge/active-power", "-120");
+    apply(s, "ebus/5/ab-1234-00xy1/fridge/relay", "OPEN");
 
     const meta = new Map([
       ["ev", circuitMeta({ id: "ev", name: "EV Charger", space: 1 })],
@@ -128,7 +128,7 @@ describe("buildSnapshot", () => {
 
   it("falls back to the circuit id when no metadata is known", () => {
     const s = emptyLiveState();
-    apply(s, "ebus/5/nj-2338-00fq1/xyz/active_power", "-500");
+    apply(s, "ebus/5/ab-1234-00xy1/xyz/active_power", "-500");
     const snap = buildSnapshot(s, new Map());
     expect(snap.top[0].name).toBe("xyz");
     expect(snap.circuits[0].id).toBe("xyz");
@@ -138,11 +138,11 @@ describe("buildSnapshot", () => {
     const s = emptyLiveState();
     // Flow so the snapshot is well-formed.
     for (const [ch, v] of [["site", "1"], ["grid", "1"], ["pv", "0"], ["battery", "0"]]) {
-      apply(s, `ebus/5/nj-2338-00fq1/power-flows/${ch}`, v);
+      apply(s, `ebus/5/ab-1234-00xy1/power-flows/${ch}`, v);
     }
-    apply(s, "ebus/5/nj-2338-00fq1/ev/active-power", "-10");
-    apply(s, "ebus/5/nj-2338-00fq1/fridge/active-power", "-10");
-    apply(s, "ebus/5/nj-2338-00fq1/unknownc/active-power", "-10");
+    apply(s, "ebus/5/ab-1234-00xy1/ev/active-power", "-10");
+    apply(s, "ebus/5/ab-1234-00xy1/fridge/active-power", "-10");
+    apply(s, "ebus/5/ab-1234-00xy1/unknownc/active-power", "-10");
     // SPAN description: ev settable+not-always-on, fridge settable but always-on.
     const desc = JSON.stringify({
       nodes: {
@@ -151,7 +151,7 @@ describe("buildSnapshot", () => {
         fridge: { properties: { relay: { settable: true } } },
       },
     });
-    expect(apply(s, "ebus/5/nj-2338-00fq1/$description", desc)).toBe(true);
+    expect(apply(s, "ebus/5/ab-1234-00xy1/$description", desc)).toBe(true);
 
     const meta = new Map([
       ["ev", circuitMeta({ id: "ev", name: "EV" })],

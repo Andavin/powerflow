@@ -1,0 +1,25 @@
+# Binary
+span-collector
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config with secrets (default config is generated at runtime)
+config.yml
+ca.pem
+*.pem
+
+# Local diagnostics / scratch output (may contain real panel data)
+check_output.txt
+*.output
+
+# Agent / tooling scratch — not part of the project
+.claude/
+bazinga/
