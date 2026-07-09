@@ -33,6 +33,35 @@ export function latestDeviceSql(): string {
   return "SELECT device_id FROM power_flows LATEST ON ts PARTITION BY device_id";
 }
 
+/**
+ * Tables the collector writes on every cycle. If any of these has a stale
+ * `max(ts)`, ingestion (or that specific table) has stalled — a single-table
+ * check would miss a per-table failure like the circuits outage. `panel_bess`
+ * is deliberately excluded: it updates only every few minutes and would
+ * false-trip a one-minute staleness check.
+ */
+export const FRESHNESS_TABLES = [
+  "power_usage",
+  "circuits",
+  "power_flows",
+  "panel_core",
+  "panel_lugs",
+] as const;
+
+/** One of the fixed sentinel table names. */
+export type FreshnessTable = (typeof FRESHNESS_TABLES)[number];
+
+/**
+ * Latest write time per sentinel table — one row each: `tbl`, `ts`.
+ *
+ * `tables` is typed to the `FreshnessTable` union, not `string`, so only the
+ * known sentinel identifiers can ever be interpolated — there is no path for
+ * caller-supplied text to reach the query (no injection surface).
+ */
+export function freshnessSql(tables: readonly FreshnessTable[] = FRESHNESS_TABLES): string {
+  return tables.map((t) => `SELECT '${t}' tbl, max(ts) ts FROM ${t}`).join(" UNION ALL ");
+}
+
 /** Latest instantaneous power-flow reading. */
 export function latestFlowSql(deviceId: string | null): string {
   const w = where([deviceEq(deviceId)]);
