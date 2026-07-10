@@ -1,0 +1,133 @@
+name: Publish Collector image
+
+# Build the Powerflow Collector image and publish it to GitHub Container
+# Registry as <repo>-collector (e.g. ghcr.io/andavin/powerflow-collector).
+#
+# Versioning mirrors the web image: the single source of truth is the Go
+# `const version` in collector/main.go — not git tags — so the image tag can
+# never drift from the binary's self-reported version:
+#   - push to main   -> :<version>, :<major.minor>, :latest, :edge, :sha-<short>
+#   - pull request    -> build only (no push); validates the Dockerfile
+#
+# To release: bump `const version` in collector/main.go and merge to main.
+#
+# Scoped to collector/** so a web-app-only change doesn't rebuild this image
+# (the web image's workflow has the mirror-image paths-ignore). Actions are
+# pinned to commit SHAs; Dependabot keeps them current (.github/dependabot.yml).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "collector/**"
+      - ".github/workflows/collector-publish.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "collector/**"
+      - ".github/workflows/collector-publish.yml"
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+concurrency:
+  # Don't let two pushes to the same ref build/push on top of each other.
+  group: collector-docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      # Needed to publish a signed build-provenance attestation.
+      attestations: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      # GHCR requires a lowercase image path; the owner (Andavin) isn't. The
+      # "-collector" suffix distinguishes it from the web image published from
+      # the same repository.
+      - name: Compute image name
+        id: image
+        run: echo "name=${GITHUB_REPOSITORY,,}-collector" >> "$GITHUB_OUTPUT"
+
+      # collector/main.go's `const version` is the source of truth for the tag.
+      - name: Read version from main.go
+        id: ver
+        working-directory: collector
+        run: |
+          v=$(sed -n 's/^const version = "\(.*\)"$/\1/p' main.go)
+          if [ -z "$v" ]; then echo "could not parse version from main.go" >&2; exit 1; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "minor=${v%.*}" >> "$GITHUB_OUTPUT"
+
+      # QEMU is only needed for the emulated arm64 build, which we skip on PRs.
+      - name: Set up QEMU
+        if: github.event_name != 'pull_request'
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      # Skip login on pull requests: forks can't read the token's packages
+      # scope, and PRs only build (never push) anyway.
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive tags and labels
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
+          tags: |
+            type=raw,value=${{ steps.ver.outputs.version }},enable=${{ github.event_name != 'pull_request' }}
+            type=raw,value=${{ steps.ver.outputs.minor }},enable=${{ github.event_name != 'pull_request' }}
+            type=raw,value=latest,enable=${{ github.event_name != 'pull_request' }}
+            type=edge,branch=main
+            type=ref,event=pr
+            type=sha,prefix=sha-
+          labels: |
+            org.opencontainers.image.title=Powerflow Collector
+            org.opencontainers.image.description=Collects a SPAN smart panel's MQTT feed into QuestDB for Powerflow
+            org.opencontainers.image.version=${{ steps.ver.outputs.version }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          # The collector (Dockerfile + sources) lives in collector/.
+          context: collector
+          # Multi-arch only for real pushes/releases. On PRs we just validate
+          # the build, so skip the slow emulated arm64 pass.
+          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Reuse layers across runs to keep rebuilds fast. A distinct scope
+          # keeps this cache from colliding with the web image's.
+          cache-from: type=gha,scope=collector
+          cache-to: type=gha,mode=max,scope=collector
+          # Provenance is attached below via actions/attest-build-provenance (a
+          # signed Sigstore attestation). Disable BuildKit's own inline
+          # provenance so the pushed index stays a clean multi-arch manifest
+          # without "unknown/unknown" entries.
+          provenance: false
+
+      # GitHub-native signed attestation linking the image digest to this run.
+      - name: Attest build provenance
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
