@@ -12,3 +12,15 @@ updates:
       # One PR for all action bumps rather than one per action.
       actions:
         patterns: ["*"]
+
+  # Keep the Go collector's module dependencies current (it lives in a
+  # subdirectory now, so it needs its own gomod entry).
+  - package-ecosystem: gomod
+    directory: /collector
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: collector
+    groups:
+      go:
+        patterns: ["*"]

@@ -48,9 +48,9 @@ huge fake spike:
 
 ## QuestDB schema (compatibility contract)
 
-The [`powerflow`](https://github.com/Andavin/powerflow) dashboard queries these
-tables. **Renaming a table/column or changing a pinned type is a breaking
-change** — keep them stable.
+The Powerflow dashboard (this repository's root) queries these tables.
+**Renaming a table/column or changing a pinned type is a breaking change** —
+keep them stable.
 
 | Table          | Key columns consumed downstream |
 |----------------|---------------------------------|
