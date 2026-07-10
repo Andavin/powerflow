@@ -1,0 +1,48 @@
+services:
+  span-collector:
+    build: .
+    container_name: span-collector
+    restart: unless-stopped
+    depends_on:
+      questdb:
+        condition: service_healthy
+    volumes:
+      - ./config:/config
+    networks:
+      - span
+    # Persist and rotate logs so `docker logs span-collector` is always
+    # available (and can't balloon on a crash-loop).
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  questdb:
+    image: questdb/questdb
+    container_name: questdb
+    restart: unless-stopped
+    ports:
+      - "9000:9000"   # Web console + HTTP API
+      - "9009:9009"   # ILP ingestion
+      - "8812:8812"   # PostgreSQL wire protocol
+    volumes:
+      - /mnt/storage/data/span:/var/lib/questdb
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
+    environment:
+      - QDB_LINE_TCP_MAINTENANCE_JOB_INTERVAL=60000
+      - QDB_PG_ENABLED=true
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/exec?query=SELECT%201 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks:
+      - span
+
+networks:
+  span:

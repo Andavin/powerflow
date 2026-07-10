@@ -1,7 +1,8 @@
 # Powerflow
 
 A fast, real-time energy dashboard for a home power panel, backed by the panel's
-live MQTT feed and the QuestDB history that `span-stats` ingests. It mirrors the
+live MQTT feed and the QuestDB history that the bundled [collector](./collector)
+ingests. It mirrors the
 panel app's phone experience (live flow animation, circuits, stats) and adds a
 richer desktop dashboard plus custom timeframes and period-over-period
 comparisons.
@@ -130,7 +131,7 @@ source of truth for the whole stack:
 POWERFLOW_TAG=0.1.0            # pin a release; QUESTDB_TAG likewise
 # Panel + MQTT (shared by collector and Powerflow)
 PANEL_HOST=span-...-.local
-PANEL_IP=192.168.0.212
+PANEL_IP=192.168.x.x
 DEVICE_ID=nj-...
 MQTT_USERNAME=...
 MQTT_PASSWORD=...
@@ -166,6 +167,16 @@ TLS-terminating reverse proxy if you want HTTPS.
 
 ## Layout
 
+This repository holds both halves of the stack:
+
+```
+collector/        Go service: subscribes to the panel's MQTT feed and writes
+                  the QuestDB tables this app reads. Has its own README, tests,
+                  Dockerfile, and CI (.github/workflows/collector-ci.yml).
+```
+
+The rest of the tree is the Powerflow web app:
+
 ```
 src/lib/          config, types, time, sql, transform, questdb client, repository, auth, period, energy, palette
 src/lib/live/     MQTT + mock live sources and the shared snapshot state
@@ -175,3 +186,7 @@ src/app/(main)/   authenticated pages (flow/dashboard, circuits, circuit detail,
 src/components/   FlowDiagram, charts, screens, AppShell, primitives, PeriodControls
 e2e/              Playwright specs (mobile + desktop projects)
 ```
+
+## License
+
+[Apache 2.0](./LICENSE) — covers the whole repository (web app and collector).
