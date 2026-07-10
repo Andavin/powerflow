@@ -1,0 +1,97 @@
+# ============================================================
+# Powerflow — shared stack configuration (example)
+# ============================================================
+# Copy this file to config/config.yml and fill in your values. It is the
+# primary configuration for the whole stack: the collector reads the
+# mqtt / span / questdb sections, and the web app reads those plus the
+# web-only `powerflow` section. Both containers mount this file at
+# /config/config.yml (see the repo-root compose.yml).
+#
+# config.yml and *.pem are gitignored so your secrets stay local. Any value
+# here can be overridden per-deploy with an environment variable in ./.env
+# (collector: SPAN_*, web app: POWERFLOW_* / QUESTDB_URL).
+
+# MQTT broker connection (the SPAN panel's local broker), shared by both apps.
+mqtt:
+  # The panel's hostname — must match its TLS cert and the PANEL_HOST in .env
+  # (compose maps PANEL_HOST -> PANEL_IP so this resolves inside the containers).
+  server: "span-xxxx-xxxxx.local"
+  port: 8883
+  # The collector's MQTT client id (the web app uses powerflow.mqtt.client_id).
+  client_id: "span-collector-01"
+  username: "REPLACE-WITH-YOUR-PANEL-SERIAL"
+  password: ""
+  # Path to the panel's CA certificate (PEM) for TLS. Mount your ca.pem into
+  # /config/ (place it at config/ca.pem on the host). Leave empty for plain TCP.
+  ca_cert: "/config/ca.pem"
+
+# SPAN panel data source, shared by both apps.
+span:
+  # SPAN panel device id (serial number) — replace with your panel's serial.
+  device_id: "REPLACE-WITH-YOUR-PANEL-SERIAL"
+  # MQTT topic prefix where the SPAN panel publishes (Homie 5.0).
+  topic_prefix: "ebus/5"
+  # How long to wait for every described property of a node to arrive before
+  # the node is marked "ready" with whatever has been received. Set "0" for
+  # strict-only behavior (wait for every declared property forever).
+  readiness_grace: "3s"
+  # Drop properties a described node publishes that its $description doesn't
+  # declare (prevents unexpected firmware fields creating columns). Pinned
+  # columns and `name` are always kept. Enable only after confirming the debug
+  # logs don't show a column you need being dropped.
+  strict_schema: false
+
+# QuestDB time-series database, shared by both apps.
+questdb:
+  # In the stack, reach QuestDB by its compose service name.
+  host: "questdb"
+  # Retained for backwards compatibility; ingestion now uses HTTP (below).
+  ilp_port: 9009
+  # HTTP API port — used for DDL (table creation) AND ILP-on-HTTP ingestion,
+  # and by the web app for stats/history queries.
+  http_port: 9000
+  create_tables: true
+  write_interval: "5s"
+  # Optional: directory where batches that fail to send during a QuestDB outage
+  # overflow to disk (in-memory retry always happens). Mount a volume to survive
+  # restarts. Empty = memory-only retry.
+  spool_dir: ""
+
+# Health / alerting (collector only; the self-restart watchdog runs regardless).
+health:
+  # Port for GET /healthz (200 healthy, 503 when a table is rejecting writes).
+  # 0 disables the endpoint.
+  port: 0
+  # Optional: POSTed a short text alert on degrade/recovery. An
+  # https://ntfy.sh/<your-topic> URL gives a zero-config phone push. Empty = off.
+  alert_webhook: ""
+
+# Logging (collector only).
+logging:
+  level: "info"   # debug | info | warn | error
+  format: "text"  # text | json
+
+# ------------------------------------------------------------
+# Web-only settings. The collector ignores this whole section.
+# ------------------------------------------------------------
+powerflow:
+  # live -> query QuestDB + subscribe to MQTT; mock -> deterministic fixtures.
+  data_mode: "live"
+  # Panel timezone: all today/week/month/year boundaries use it.
+  timezone: "America/Denver"
+  # Login (the app expects to be reachable only on a trusted LAN / Tailnet).
+  # Set a strong password; sessions are signed with the secret (>= 32 chars,
+  # e.g. `openssl rand -hex 32`). Prefer overriding these two from .env.
+  auth_disabled: false
+  password: "changeme"
+  session_secret: "please-generate-a-long-random-string"
+  # Breaker control (turning circuits on/off). Even when true, only circuits
+  # SPAN marks settable and not always-on can be toggled.
+  control_enabled: true
+  mqtt:
+    # The web app's own MQTT client id (kept distinct from the collector's so
+    # they don't kick each other off the broker).
+    client_id: "powerflow-web"
+    # Validate the broker cert against the CA above. The hostname check is
+    # skipped in code when a CA is pinned, so this can stay true.
+    reject_unauthorized: true
