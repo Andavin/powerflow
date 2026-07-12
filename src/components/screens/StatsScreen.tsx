@@ -169,8 +169,8 @@ function CircuitBreakdown({
   );
 }
 
-export function StatsScreen() {
-  const [source, setSource] = useState<StatSource>("home");
+export function StatsScreen({ initialSource = "home" }: { initialSource?: StatSource } = {}) {
+  const [source, setSource] = useState<StatSource>(initialSource);
   const sel = usePeriodSelector();
   const { compare, noun, win, prev: prevWin } = sel;
 
