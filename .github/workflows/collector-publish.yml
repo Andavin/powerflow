@@ -61,7 +61,9 @@ jobs:
         id: ver
         working-directory: collector
         run: |
-          v=$(sed -n 's/^const version = "\(.*\)"$/\1/p' main.go)
+          # Whitespace/comment-tolerant: survives gofmt, an indented const
+          # block, or a trailing comment on the line.
+          v=$(sed -n 's/^\s*const\s\+version\s*=\s*"\([^"]\+\)".*/\1/p' main.go)
           if [ -z "$v" ]; then echo "could not parse version from main.go" >&2; exit 1; fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
           echo "minor=${v%.*}" >> "$GITHUB_OUTPUT"
