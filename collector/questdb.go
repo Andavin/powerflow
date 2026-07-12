@@ -60,6 +60,28 @@ var tableDDL = []string{
 	`CREATE TABLE IF NOT EXISTS unknown_topics (device_id SYMBOL, node_id SYMBOL, ts TIMESTAMP) timestamp(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, device_id, node_id)`,
 }
 
+// Materialized views — hourly rollups QuestDB maintains incrementally as
+// power_flows is written. The Powerflow web app reads these for long-range
+// (week/month/year) charts, scanning a few thousand pre-aggregated rows instead
+// of tens of millions of raw ones. Created after the base table + its pinned
+// columns exist (the SELECT references site/pv/grid/battery). Stores per-hour
+// averages, sign-split component sums, and the sample count so the app can
+// re-aggregate to coarser buckets with an exact count-weighted average.
+var viewDDL = []string{
+	`CREATE MATERIALIZED VIEW IF NOT EXISTS power_flows_1h AS (
+		SELECT
+			ts, device_id,
+			avg(site) site_w, avg(pv) pv_w, avg(grid) grid_w, avg(battery) battery_w,
+			sum(CASE WHEN battery > 0 THEN battery ELSE 0 END) batt_charge_sum,
+			sum(CASE WHEN battery < 0 THEN -battery ELSE 0 END) batt_discharge_sum,
+			sum(CASE WHEN grid < 0 THEN -grid ELSE 0 END) grid_import_sum,
+			sum(CASE WHEN grid > 0 THEN grid ELSE 0 END) grid_export_sum,
+			count() n
+		FROM power_flows
+		SAMPLE BY 1h
+	) PARTITION BY MONTH`,
+}
+
 // ---------------------------------------------------------------------------
 // ILP line builder — InfluxDB Line Protocol (sent to QuestDB over HTTP /write)
 // ---------------------------------------------------------------------------
@@ -255,8 +277,16 @@ func (q *QuestDBWriter) CreateTables() error {
 		}
 	}
 
+	// Rollup materialized views, after the base tables + pinned columns they
+	// reference. Incrementally maintained by QuestDB from here on.
+	for _, ddl := range viewDDL {
+		if err := q.execHTTP(ddl); err != nil {
+			return fmt.Errorf("view DDL failed: %w\n  statement: %s", err, ddl)
+		}
+	}
+
 	q.logger.Info("QuestDB tables verified",
-		"tables", len(tableDDL), "pinned_columns", len(colDDL))
+		"tables", len(tableDDL), "pinned_columns", len(colDDL), "views", len(viewDDL))
 	return nil
 }
 

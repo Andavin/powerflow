@@ -28,6 +28,54 @@ function timeRange(window: Pick<TimeWindow, "from" | "to">): string {
   return `ts >= '${window.from}' AND ts < '${window.to}'`;
 }
 
+/**
+ * Hourly rollup of power_flows, maintained by QuestDB as a materialized view
+ * (see the collector's viewDDL). Long-range queries read this instead of the
+ * raw table — thousands of pre-aggregated rows vs tens of millions.
+ */
+const FLOW_ROLLUP_VIEW = "power_flows_1h";
+
+/**
+ * The rollup is used only for windows strictly longer than this. 26h keeps every
+ * "today" variant (23–25h across DST) on the raw path, while week/month/year go
+ * to the rollup.
+ */
+const ROLLUP_MIN_WINDOW_MS = 26 * 60 * 60 * 1000;
+
+/**
+ * Whether to read the hourly rollup rather than the raw table. Long windows use
+ * it; shorter ones (today / sub-day custom) stay on raw for full resolution and
+ * zero rollup-refresh lag. Called once per API request (not a hot path), so the
+ * two Date parses are negligible next to the QuestDB round-trip that follows.
+ */
+function usesRollup(window: Pick<TimeWindow, "from" | "to">): boolean {
+  return new Date(window.to).getTime() - new Date(window.from).getTime() > ROLLUP_MIN_WINDOW_MS;
+}
+
+/**
+ * The flow aggregate projection (everything after the optional `ts`), shared by
+ * the series and totals builders so the two never drift. Two forms:
+ *   - RAW: computed from raw power_flows rows.
+ *   - ROLLUP: re-aggregated from the hourly rollup — count-weighted averages
+ *     (`sum(avg*n)/sum(n)` == the raw average, exactly) + additive sums.
+ * The collector's view definition (viewDDL, in Go) necessarily mirrors the raw
+ * form across the language boundary.
+ */
+const RAW_FLOW_PROJECTION =
+  `avg(site) site_w, avg(pv) pv_w, avg(grid) grid_w, avg(battery) battery_w, ` +
+  `sum(CASE WHEN battery > 0 THEN battery ELSE 0 END) batt_charge_sum, ` +
+  `sum(CASE WHEN battery < 0 THEN -battery ELSE 0 END) batt_discharge_sum, ` +
+  `sum(CASE WHEN grid < 0 THEN -grid ELSE 0 END) grid_import_sum, ` +
+  `sum(CASE WHEN grid > 0 THEN grid ELSE 0 END) grid_export_sum, ` +
+  `count() n`;
+
+const ROLLUP_FLOW_PROJECTION =
+  `sum(site_w * n) / sum(n) site_w, sum(pv_w * n) / sum(n) pv_w, ` +
+  `sum(grid_w * n) / sum(n) grid_w, sum(battery_w * n) / sum(n) battery_w, ` +
+  `sum(batt_charge_sum) batt_charge_sum, sum(batt_discharge_sum) batt_discharge_sum, ` +
+  `sum(grid_import_sum) grid_import_sum, sum(grid_export_sum) grid_export_sum, ` +
+  `sum(n) n`;
+
 /** The most recently seen device id (used when none is configured). */
 export function latestDeviceSql(): string {
   return "SELECT device_id FROM power_flows LATEST ON ts PARTITION BY device_id";
@@ -99,17 +147,10 @@ export function flowSeriesSql(
 ): string {
   const w = where([deviceEq(deviceId), timeRange(window)]);
   const unit = sampleByUnit(window.bucket);
-  return (
-    `SELECT ts, ` +
-    `avg(site) site_w, avg(pv) pv_w, avg(grid) grid_w, avg(battery) battery_w, ` +
-    `sum(CASE WHEN battery > 0 THEN battery ELSE 0 END) batt_charge_sum, ` +
-    `sum(CASE WHEN battery < 0 THEN -battery ELSE 0 END) batt_discharge_sum, ` +
-    `sum(CASE WHEN grid < 0 THEN -grid ELSE 0 END) grid_import_sum, ` +
-    `sum(CASE WHEN grid > 0 THEN grid ELSE 0 END) grid_export_sum, ` +
-    `count() n ` +
-    `FROM power_flows ${w} ` +
-    `SAMPLE BY ${unit} FILL(NULL) ALIGN TO CALENDAR TIME ZONE '${escapeLiteral(tz)}'`
-  );
+  const tail = `${w} SAMPLE BY ${unit} FILL(NULL) ALIGN TO CALENDAR TIME ZONE '${escapeLiteral(tz)}'`;
+  return usesRollup(window)
+    ? `SELECT ts, ${ROLLUP_FLOW_PROJECTION} FROM ${FLOW_ROLLUP_VIEW} ${tail}`
+    : `SELECT ts, ${RAW_FLOW_PROJECTION} FROM power_flows ${tail}`;
 }
 
 /** Battery state-of-charge series for the same window. */
@@ -148,14 +189,9 @@ export function flowTotalsSql(
   deviceId: string | null,
 ): string {
   const w = where([deviceEq(deviceId), timeRange(window)]);
-  return (
-    `SELECT avg(site) site_w, avg(pv) pv_w, avg(grid) grid_w, avg(battery) battery_w, ` +
-    `sum(CASE WHEN battery > 0 THEN battery ELSE 0 END) batt_charge_sum, ` +
-    `sum(CASE WHEN battery < 0 THEN -battery ELSE 0 END) batt_discharge_sum, ` +
-    `sum(CASE WHEN grid < 0 THEN -grid ELSE 0 END) grid_import_sum, ` +
-    `sum(CASE WHEN grid > 0 THEN grid ELSE 0 END) grid_export_sum, ` +
-    `count() n FROM power_flows ${w}`
-  );
+  return usesRollup(window)
+    ? `SELECT ${ROLLUP_FLOW_PROJECTION} FROM ${FLOW_ROLLUP_VIEW} ${w}`
+    : `SELECT ${RAW_FLOW_PROJECTION} FROM power_flows ${w}`;
 }
 
 /**

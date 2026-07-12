@@ -64,6 +64,13 @@ All tables are `PARTITION BY DAY … WAL` with `DEDUP UPSERT KEYS(ts, …)`. A s
 of columns is **type-pinned** in [`columns.go`](./columns.go) so a firmware
 change to the panel's declared datatype can't poison a locked QuestDB column.
 
+The collector also creates an **hourly materialized view** `power_flows_1h`
+(QuestDB maintains it incrementally). The dashboard reads it for long-range
+(week/month/year) charts, scanning a few thousand pre-aggregated rows instead of
+millions of raw ones. It stores per-hour averages, sign-split component sums, and
+the sample count, so coarser buckets re-aggregate with an exact count-weighted
+average.
+
 ## Configuration
 
 Config is YAML (default path `/config/config.yml`, optional). It's the **shared
