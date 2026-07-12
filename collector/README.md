@@ -66,9 +66,14 @@ change to the panel's declared datatype can't poison a locked QuestDB column.
 
 ## Configuration
 
-Config is YAML (default path `/config/config.yml`). If it doesn't exist the
-collector writes a template and exits so you can edit it. See
-[`config/config.example.yml`](./config/config.example.yml).
+Config is YAML (default path `/config/config.yml`, optional). It's the **shared
+stack config** — the same file the Powerflow web app reads — so the collector
+uses the `mqtt` / `span` / `questdb` sections and ignores the web-only
+`powerflow` section. See [`config/config.example.yml`](../config/config.example.yml)
+at the repository root. Run `span-collector -init` to scaffold a starter file.
+
+If the file is missing the collector runs entirely from built-in defaults plus
+`SPAN_*` environment overrides (see below), so it can run with no file at all.
 
 | Key | Meaning |
 |-----|---------|
@@ -105,11 +110,17 @@ stop ingestion:
 
 ## Running
 
+The collector runs as part of the full stack from the repository-root
+[`compose.yml`](../compose.yml) (QuestDB + collector + web app), pulling the
+published image `ghcr.io/andavin/powerflow-collector`:
+
 ```bash
-docker compose up -d          # starts QuestDB + the collector
+docker compose up -d          # from the repository root
 ```
 
-Mount your real `config.yml` and `ca.pem` into `/config` (see `compose.yml`).
+Configuration is the shared `config/config.yml` and the panel `ca.pem`, mounted
+into `/config` (see the root README's Deploy section). To run just the binary
+outside Docker, point `-config` at a local file: `go run . -config ./config.yml`.
 
 ## Development
 

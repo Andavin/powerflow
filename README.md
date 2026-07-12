@@ -59,19 +59,35 @@ to now. All day boundaries use the panel timezone (default `America/Denver`).
 
 ## Configuration
 
-Copy `.env.example` to `.env.local` and set values:
+The whole stack is configured the same way, layered like the collector:
 
-| Variable                    | Purpose                                                  |
+```
+built-in defaults  <  config.yml  <  environment variables
+```
+
+The primary source is the **shared `config.yml`** (see
+[`config/config.example.yml`](./config/config.example.yml)) — the collector
+reads its `mqtt` / `span` / `questdb` sections and the web app reads those plus a
+web-only `powerflow` section. Environment variables override individual keys, so
+you can keep secrets in `.env` or drive everything from the environment with no
+file at all. The web app looks for the file at `/config/config.yml` (override
+with `POWERFLOW_CONFIG_FILE`).
+
+For **local dev** there's usually no file — put the values in `.env.local`
+(loaded by `pnpm dev`). The web app's variables, each of which also overrides the
+matching `config.yml` key:
+
+| Variable                    | Overrides / purpose                                      |
 | --------------------------- | -------------------------------------------------------- |
 | `POWERFLOW_DATA_MODE`       | `live` (QuestDB + MQTT) or `mock` (deterministic fixtures) |
-| `QUESTDB_URL`               | QuestDB HTTP endpoint (`/exec`)                          |
+| `QUESTDB_URL`               | QuestDB HTTP endpoint (`/exec`) — else derived from `questdb.host`/`http_port` |
 | `POWERFLOW_TIMEZONE`        | Panel timezone (default `America/Denver`)                |
 | `POWERFLOW_DEVICE_ID`       | Scope queries to a device (blank = most recent; required for live) |
 | `POWERFLOW_PASSWORD`        | Login password                                           |
 | `POWERFLOW_SESSION_SECRET`  | Long random string signing sessions (≥ 32 chars)         |
 | `POWERFLOW_AUTH_DISABLED`   | `1` to bypass auth (tests / trusted LAN only)            |
 | `POWERFLOW_CONTROL_ENABLED` | `1` to enable breaker control; default `0` (read-only)   |
-| `POWERFLOW_MQTT_*`          | Broker URL / credentials / CA / topic prefix for the live feed |
+| `POWERFLOW_MQTT_*`          | Broker URL / credentials / CA / topic prefix — else derived from `mqtt.*` |
 
 ## Real-time transport
 
@@ -114,56 +130,44 @@ fake client; Playwright runs the app in `mock` mode.
 
 ## Deploy (Docker)
 
-CI publishes a multi-arch image to **`ghcr.io/andavin/powerflow`** (tagged from
-`package.json`'s version — see `.github/workflows/docker-publish.yml`). You run
-that image rather than building locally.
+The repo-root [`compose.yml`](./compose.yml) runs the **full stack** — QuestDB,
+the [collector](./collector), and the web app — on one Docker network. Every
+image is pulled from a registry; nothing is built locally:
 
-### As part of the span stack (recommended)
+- `ghcr.io/andavin/powerflow` — web app, tagged from `package.json`'s version
+  (`.github/workflows/docker-publish.yml`)
+- `ghcr.io/andavin/powerflow-collector` — collector, tagged from its Go
+  `const version` (`.github/workflows/collector-publish.yml`)
+- `questdb/questdb` — upstream image
 
-Powerflow is designed to sit alongside the `span-collector` and `questdb`
-services in the parent `span-stats` compose, on one Docker network. That lets it
-reach QuestDB directly at `http://questdb:9000` (no host gateway) and share the
-panel's MQTT credentials + CA with the collector. A **single `.env`** is the
-source of truth for the whole stack:
+On this network the web app reaches QuestDB at `http://questdb:9000` and shares
+the panel's MQTT credentials + CA with the collector through the single
+`config/config.yml`.
 
-```dotenv
-# Images
-POWERFLOW_TAG=0.1.0            # pin a release; QUESTDB_TAG likewise
-# Panel + MQTT (shared by collector and Powerflow)
-PANEL_HOST=span-...-.local
-PANEL_IP=192.168.x.x
-DEVICE_ID=nj-...
-MQTT_USERNAME=...
-MQTT_PASSWORD=...
-MQTT_TOPIC_PREFIX=ebus/5
-# Powerflow auth
-POWERFLOW_PASSWORD=...
-POWERFLOW_SESSION_SECRET=...   # openssl rand -hex 32
-POWERFLOW_PORT=3007            # host port (-> container :3000)
-```
-
-The Powerflow service in that compose enables auth (`POWERFLOW_AUTH_DISABLED=0`)
-and breaker control (`POWERFLOW_CONTROL_ENABLED=1`), points
-`QUESTDB_URL` at `http://questdb:9000`, and mounts the panel CA read-only at
-`/config/ca.pem` (the same `ca.pem` the collector uses — fetch it once with the
-collector's `fetch-ca.sh`). Bring the stack up with:
+### First run
 
 ```bash
-cp .env.example .env          # fill in the secrets
-./collector/fetch-ca.sh       # grab the panel's MQTT CA (once)
-docker compose pull           # Powerflow image from GHCR
-docker compose up -d --build  # --build compiles the local collector
+cp .env.example .env                              # image tags, PANEL_HOST/IP
+cp config/config.example.yml config/config.yml    # panel + questdb + app config
+#  ...place the panel's MQTT CA at config/ca.pem...
+docker compose pull
+docker compose up -d
 ```
 
-> The CA `ca.pem` must exist before `up`, or Docker will create a *directory*
-> in its place. `fetch-ca.sh` writes it for you.
+`.env` carries compose settings (image tags, host port, `PANEL_HOST`/`PANEL_IP`)
+and can override any config key; `config/config.yml` (gitignored) is the actual
+configuration for both apps. The collector and web app reach the broker by
+hostname so its TLS cert validates — compose maps `PANEL_HOST` (which must match
+`mqtt.server` in `config.yml`) to `PANEL_IP` inside the containers via
+`extra_hosts`.
 
-### Standalone
+> `config/ca.pem` must exist before `up`, or Docker will create a *directory* in
+> its place. It's the panel's self-signed MQTT CA; grab it once, e.g.
+> `openssl s_client -showcerts -connect "$PANEL_IP:8883" </dev/null` and save the
+> CA certificate to `config/ca.pem`.
 
-Powerflow can also run on its own with the bundled `compose.yml`; set
-`QUESTDB_URL` and the `POWERFLOW_MQTT_*` values in `.env` yourself. Either way,
-reach it over your private network / Tailnet and put it behind a
-TLS-terminating reverse proxy if you want HTTPS.
+Both `config/config.yml` and `config/ca.pem` are gitignored;
+`config/config.example.yml` is the committed template.
 
 ## Layout
 
@@ -173,6 +177,10 @@ This repository holds both halves of the stack:
 collector/        Go service: subscribes to the panel's MQTT feed and writes
                   the QuestDB tables this app reads. Has its own README, tests,
                   Dockerfile, and CI (.github/workflows/collector-ci.yml).
+compose.yml       Full-stack deployment: QuestDB + collector + web app.
+config/            Shared stack config mounted into both apps at /config
+                  (config.example.yml is the template; real config.yml + ca.pem
+                  are gitignored).
 ```
 
 The rest of the tree is the Powerflow web app:

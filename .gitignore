@@ -39,6 +39,12 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...but the committed template is safe (placeholders only).
+!.env.example
+
+# shared stack config: the real config.yml holds secrets, the example is safe.
+# (ca.pem is covered by the *.pem rule above.)
+/config/config.yml
 
 # vercel
 .vercel

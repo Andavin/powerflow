@@ -1,43 +1,96 @@
-# Powerflow web app.
+# Powerflow — full stack: QuestDB + collector + web app.
 #
-# Runs as its own container, separate from QuestDB. QuestDB publishes port 9000
-# on the host, so this reaches it via host.docker.internal (see extra_hosts) —
-# `localhost` inside a container is the container itself, not the host.
+# Every image is pulled from a registry (GHCR / Docker Hub); nothing is built
+# locally. Configuration is the shared ./config/config.yml, mounted read-only
+# into both apps at /config/config.yml, with ./.env supplying compose settings
+# (image tags, host port, panel host/IP) and overriding individual config keys.
 #
-# The image is built and published to GHCR by the docker-publish workflow;
-# pull and run it (no local build) with:
+# First run:
+#   cp .env.example .env                              # image tags, PANEL_HOST/IP
+#   cp config/config.example.yml config/config.yml    # panel + questdb + app config
+#   #  ...place the panel's CA at config/ca.pem...
+#   docker compose pull
+#   docker compose up -d
 #
-#   docker compose pull && docker compose up -d
-#
-# All settings below have working defaults and can be overridden in ./.env:
-#   POWERFLOW_TAG      image tag to run (e.g. 0.1.0)          default: latest
-#   POWERFLOW_PORT     host port to expose the app on          default: 3007
-#   POWERFLOW_DATA_MODE  live | mock                           default: live
-#   QUESTDB_URL        QuestDB HTTP endpoint                    default: host gateway :9000
-#   POWERFLOW_AUTH_DISABLED  1 to bypass login (trusted LAN)    default: 0
-# Secrets (POWERFLOW_PASSWORD, POWERFLOW_SESSION_SECRET) and the MQTT settings
-# must be provided in ./.env for live mode + login to work.
+# The panel's MQTT broker is reached by hostname so its TLS cert validates;
+# extra_hosts maps that hostname (PANEL_HOST, matching mqtt.server in
+# config.yml) to the panel's LAN IP (PANEL_IP) inside the containers.
 
 services:
+  questdb:
+    image: questdb/questdb:${QUESTDB_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      # Web console + HTTP API on the host (handy for debugging / the console).
+      - "${QUESTDB_HTTP_PORT:-9000}:9000"
+    volumes:
+      # A named volume by default; set QUESTDB_DATA to an absolute host path to
+      # store the data elsewhere (e.g. /mnt/storage/data/span).
+      - "${QUESTDB_DATA:-questdb-data}:/var/lib/questdb"
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
+    environment:
+      - QDB_LINE_TCP_MAINTENANCE_JOB_INTERVAL=60000
+      - QDB_PG_ENABLED=true
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/exec?query=SELECT%201 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks:
+      - span
+
+  powerflow-collector:
+    image: ghcr.io/andavin/powerflow-collector:${COLLECTOR_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      questdb:
+        condition: service_healthy
+    volumes:
+      # Shared config.yml + ca.pem. Read-only: the collector only reads them.
+      - ./config:/config:ro
+    env_file:
+      # Optional overrides for config.yml (SPAN_*). Absent on a fresh checkout.
+      - path: .env
+        required: false
+    extra_hosts:
+      - "${PANEL_HOST:?set PANEL_HOST in .env}:${PANEL_IP:?set PANEL_IP in .env}"
+    # Persist and rotate logs so `docker logs` is always available (and can't
+    # balloon on a crash-loop).
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    networks:
+      - span
+
   powerflow:
     image: ghcr.io/andavin/powerflow:${POWERFLOW_TAG:-latest}
     restart: unless-stopped
+    depends_on:
+      questdb:
+        condition: service_healthy
     ports:
       # host:container — the app listens on 3000 inside the container.
       - "${POWERFLOW_PORT:-3007}:3000"
+    volumes:
+      # Same shared config.yml + ca.pem the collector uses.
+      - ./config:/config:ro
     env_file:
-      # Optional so `docker compose up` doesn't hard-fail on a fresh checkout;
-      # provide it for secrets + MQTT config in a real deployment.
       - path: .env
         required: false
     environment:
-      POWERFLOW_DATA_MODE: ${POWERFLOW_DATA_MODE:-live}
-      # QuestDB runs in another container with port 9000 published on the host;
-      # reach it through the host gateway (mapped by extra_hosts below).
-      QUESTDB_URL: ${QUESTDB_URL:-http://host.docker.internal:9000}
-      POWERFLOW_AUTH_DISABLED: ${POWERFLOW_AUTH_DISABLED:-0}
+      # In-stack, always reach QuestDB over the compose network. Set here (not
+      # in config.yml) because the host/port differ from the collector's view
+      # only in that both resolve `questdb` on this network; `environment`
+      # also wins over any QUESTDB_URL left in .env.
+      QUESTDB_URL: http://questdb:9000
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - "${PANEL_HOST:?set PANEL_HOST in .env}:${PANEL_IP:?set PANEL_IP in .env}"
     healthcheck:
       # /api/health is public (no auth) and always 200 when the server is up.
       test:
@@ -47,3 +100,11 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+    networks:
+      - span
+
+volumes:
+  questdb-data:
+
+networks:
+  span:
