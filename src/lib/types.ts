@@ -9,7 +9,10 @@
  * Invariant: homeW = solarW + gridW + batteryW
  */
 
-export type StatSource = "home" | "solar" | "battery" | "grid";
+/** The four energy sources, in canonical display order. Single source of truth
+ *  for both the `StatSource` union and any runtime iteration/validation. */
+export const STAT_SOURCES = ["home", "solar", "battery", "grid"] as const;
+export type StatSource = (typeof STAT_SOURCES)[number];
 export type StatRange = "today" | "week" | "month" | "year";
 export type Bucket = "hour" | "day" | "month";
 

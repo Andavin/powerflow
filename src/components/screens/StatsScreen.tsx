@@ -16,9 +16,7 @@ import type { Window } from "@/lib/period";
 import { headlineKWh, sourceMetrics } from "@/lib/energy";
 import { SOURCE_COLOR, SOURCE_LABEL } from "@/lib/palette";
 import { splitEnergy, formatPercent } from "@/lib/format";
-import type { EnergySeries, StatSource } from "@/lib/types";
-
-const SOURCES: StatSource[] = ["home", "solar", "battery", "grid"];
+import { STAT_SOURCES, type EnergySeries, type StatSource } from "@/lib/types";
 
 function SourceTabs({
   source,
@@ -29,7 +27,7 @@ function SourceTabs({
 }) {
   return (
     <div role="tablist" aria-label="Energy source" className="flex justify-center gap-2">
-      {SOURCES.map((s) => {
+      {STAT_SOURCES.map((s) => {
         const Icon = SOURCE_ICON[s];
         const active = s === source;
         return (
@@ -169,8 +167,8 @@ function CircuitBreakdown({
   );
 }
 
-export function StatsScreen() {
-  const [source, setSource] = useState<StatSource>("home");
+export function StatsScreen({ initialSource = "home" }: { initialSource?: StatSource } = {}) {
+  const [source, setSource] = useState<StatSource>(initialSource);
   const sel = usePeriodSelector();
   const { compare, noun, win, prev: prevWin } = sel;
 

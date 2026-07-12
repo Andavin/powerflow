@@ -30,6 +30,14 @@ function cardMetrics(series: EnergySeries): Metric[] {
   return series.source === "battery" ? [m(secondary), m(primary)] : [m(primary), m(secondary)];
 }
 
+// Focus ring tinted to each source (color tokens live in globals.css @theme).
+const RING_BY_SOURCE: Record<StatSource, string> = {
+  home: "focus-visible:ring-home/50",
+  solar: "focus-visible:ring-solar/50",
+  battery: "focus-visible:ring-battery/50",
+  grid: "focus-visible:ring-grid/50",
+};
+
 function SourceStatCard({ source }: { source: StatSource }) {
   const { data } = useStats(source, "today");
   const Icon = SOURCE_ICON[source];
@@ -43,40 +51,46 @@ function SourceStatCard({ source }: { source: StatSource }) {
     : [];
 
   return (
-    <Card className="flex flex-col gap-2 p-4">
-      <div className="flex items-center gap-2 text-sm text-muted">
-        <span style={{ color }}>
-          <Icon width={18} height={18} />
-        </span>
-        {SOURCE_LABEL[source]}
-      </div>
-      {metrics ? (
-        <>
-          {metrics.length === 1 ? (
-            <StatNumber value={metrics[0].value} unit={metrics[0].unit} color={color} className="text-3xl" />
-          ) : (
-            <div className="flex gap-6">
-              {metrics.map((m) => (
-                <div key={m.label}>
-                  <StatNumber value={m.value} unit={m.unit} color={color} className="text-2xl" />
-                  <div className="text-xs text-muted">{m.label}</div>
-                </div>
-              ))}
-            </div>
-          )}
-          <div className="mt-auto flex items-end justify-between gap-2 pt-1">
-            <span className="text-xs text-faint">
-              {metrics.length === 1 ? `${metrics[0].label} today` : "today"}
-            </span>
-            <Sparkline values={spark} color={color} />
-          </div>
-        </>
-      ) : (
-        <div className="flex h-20 items-center">
-          <Spinner className="h-5 w-5" />
+    <Link
+      href={`/stats?source=${source}`}
+      aria-label={`View ${SOURCE_LABEL[source]} stats`}
+      className={`block h-full rounded-2xl focus-visible:outline-none focus-visible:ring-2 ${RING_BY_SOURCE[source]}`}
+    >
+      <Card className="flex h-full flex-col gap-2 p-4 transition hover:bg-surface-2">
+        <div className="flex items-center gap-2 text-sm text-muted">
+          <span style={{ color }}>
+            <Icon width={18} height={18} />
+          </span>
+          {SOURCE_LABEL[source]}
         </div>
-      )}
-    </Card>
+        {metrics ? (
+          <>
+            {metrics.length === 1 ? (
+              <StatNumber value={metrics[0].value} unit={metrics[0].unit} color={color} className="text-3xl" />
+            ) : (
+              <div className="flex gap-6">
+                {metrics.map((m) => (
+                  <div key={m.label}>
+                    <StatNumber value={m.value} unit={m.unit} color={color} className="text-2xl" />
+                    <div className="text-xs text-muted">{m.label}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="mt-auto flex items-end justify-between gap-2 pt-1">
+              <span className="text-xs text-faint">
+                {metrics.length === 1 ? `${metrics[0].label} today` : "today"}
+              </span>
+              <Sparkline values={spark} color={color} />
+            </div>
+          </>
+        ) : (
+          <div className="flex h-20 items-center">
+            <Spinner className="h-5 w-5" />
+          </div>
+        )}
+      </Card>
+    </Link>
   );
 }
 
