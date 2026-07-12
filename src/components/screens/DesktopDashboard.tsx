@@ -46,7 +46,7 @@ function SourceStatCard({ source }: { source: StatSource }) {
     <Link
       href={`/stats?source=${source}`}
       aria-label={`View ${SOURCE_LABEL[source]} stats`}
-      className="block h-full"
+      className="block h-full rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-battery/40"
     >
       <Card className="flex h-full flex-col gap-2 p-4 transition hover:bg-surface-2">
         <div className="flex items-center gap-2 text-sm text-muted">
