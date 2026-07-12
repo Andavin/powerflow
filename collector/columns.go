@@ -95,6 +95,16 @@ var columnTypes = map[string]map[string]qType{
 		"always_on":       qBoolean,
 		"dipole":          qBoolean,
 	},
+	"power_flows": {
+		// The four instantaneous power channels (watts). Pinning them makes the
+		// columns exist immediately after CREATE TABLE — before any ILP write —
+		// so the hourly rollup view (see viewDDL) can be created on a fresh
+		// database, and locks their type against a firmware change.
+		"site":    qDouble,
+		"pv":      qDouble,
+		"grid":    qDouble,
+		"battery": qDouble,
+	},
 }
 
 // allPinnedColumns returns every pinned column name across all tables. The
