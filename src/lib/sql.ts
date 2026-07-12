@@ -28,6 +28,23 @@ function timeRange(window: Pick<TimeWindow, "from" | "to">): string {
   return `ts >= '${window.from}' AND ts < '${window.to}'`;
 }
 
+/**
+ * Hourly rollup of power_flows, maintained by QuestDB as a materialized view
+ * (see the collector's viewDDL). Long-range queries read this instead of the
+ * raw table — thousands of pre-aggregated rows vs tens of millions.
+ */
+const FLOW_ROLLUP_VIEW = "power_flows_1h";
+
+/**
+ * Whether to read the hourly rollup rather than the raw table. Windows longer
+ * than ~26h use it; shorter ones (today / sub-day custom) stay on raw for full
+ * resolution and zero rollup-refresh lag. 26h keeps every "today" variant
+ * (23–25h across DST) on the raw path.
+ */
+function usesRollup(window: Pick<TimeWindow, "from" | "to">): boolean {
+  return new Date(window.to).getTime() - new Date(window.from).getTime() > 26 * 3_600_000;
+}
+
 /** The most recently seen device id (used when none is configured). */
 export function latestDeviceSql(): string {
   return "SELECT device_id FROM power_flows LATEST ON ts PARTITION BY device_id";
@@ -99,6 +116,21 @@ export function flowSeriesSql(
 ): string {
   const w = where([deviceEq(deviceId), timeRange(window)]);
   const unit = sampleByUnit(window.bucket);
+  const tail = `${w} SAMPLE BY ${unit} FILL(NULL) ALIGN TO CALENDAR TIME ZONE '${escapeLiteral(tz)}'`;
+  if (usesRollup(window)) {
+    // Re-aggregate the hourly rollup. The averages are count-weighted
+    // (`sum(avg*n)/sum(n)` == the average over the raw rows, exactly), and the
+    // component sums / sample count are additive across hours.
+    return (
+      `SELECT ts, ` +
+      `sum(site_w * n) / sum(n) site_w, sum(pv_w * n) / sum(n) pv_w, ` +
+      `sum(grid_w * n) / sum(n) grid_w, sum(battery_w * n) / sum(n) battery_w, ` +
+      `sum(batt_charge_sum) batt_charge_sum, sum(batt_discharge_sum) batt_discharge_sum, ` +
+      `sum(grid_import_sum) grid_import_sum, sum(grid_export_sum) grid_export_sum, ` +
+      `sum(n) n ` +
+      `FROM ${FLOW_ROLLUP_VIEW} ${tail}`
+    );
+  }
   return (
     `SELECT ts, ` +
     `avg(site) site_w, avg(pv) pv_w, avg(grid) grid_w, avg(battery) battery_w, ` +
@@ -107,8 +139,7 @@ export function flowSeriesSql(
     `sum(CASE WHEN grid < 0 THEN -grid ELSE 0 END) grid_import_sum, ` +
     `sum(CASE WHEN grid > 0 THEN grid ELSE 0 END) grid_export_sum, ` +
     `count() n ` +
-    `FROM power_flows ${w} ` +
-    `SAMPLE BY ${unit} FILL(NULL) ALIGN TO CALENDAR TIME ZONE '${escapeLiteral(tz)}'`
+    `FROM power_flows ${tail}`
   );
 }
 
@@ -148,6 +179,15 @@ export function flowTotalsSql(
   deviceId: string | null,
 ): string {
   const w = where([deviceEq(deviceId), timeRange(window)]);
+  if (usesRollup(window)) {
+    return (
+      `SELECT sum(site_w * n) / sum(n) site_w, sum(pv_w * n) / sum(n) pv_w, ` +
+      `sum(grid_w * n) / sum(n) grid_w, sum(battery_w * n) / sum(n) battery_w, ` +
+      `sum(batt_charge_sum) batt_charge_sum, sum(batt_discharge_sum) batt_discharge_sum, ` +
+      `sum(grid_import_sum) grid_import_sum, sum(grid_export_sum) grid_export_sum, ` +
+      `sum(n) n FROM ${FLOW_ROLLUP_VIEW} ${w}`
+    );
+  }
   return (
     `SELECT avg(site) site_w, avg(pv) pv_w, avg(grid) grid_w, avg(battery) battery_w, ` +
     `sum(CASE WHEN battery > 0 THEN battery ELSE 0 END) batt_charge_sum, ` +

@@ -129,6 +129,46 @@ describe("flowTotalsSql", () => {
     expect(sql).toContain("avg(site)");
     expect(sql).toContain("count() n");
   });
+  it("reads the hourly rollup (weighted) for a long window", () => {
+    const sql = flowTotalsSql(LONG, "dev1");
+    expect(sql).toContain("FROM power_flows_1h");
+    expect(sql).toContain("sum(site_w * n) / sum(n) site_w");
+    expect(sql).toContain("sum(grid_import_sum) grid_import_sum");
+    expect(sql).not.toContain("avg(site)");
+    expect(sql).not.toContain("SAMPLE BY");
+  });
+});
+
+// A window longer than ~26h reads the hourly rollup view (power_flows_1h);
+// shorter ones stay on the raw table. See usesRollup() in sql.ts.
+const LONG: TimeWindow = {
+  from: "2026-01-01T07:00:00.000Z",
+  to: "2026-07-01T06:00:00.000Z",
+  bucket: "month",
+};
+
+describe("flowSeriesSql — hourly rollup routing", () => {
+  it("reads the rollup with count-weighted averages for a long window", () => {
+    const sql = flowSeriesSql(LONG, TZ, "dev1");
+    expect(sql).toContain("FROM power_flows_1h");
+    expect(sql).toContain("sum(site_w * n) / sum(n) site_w");
+    expect(sql).toContain("sum(batt_charge_sum) batt_charge_sum");
+    expect(sql).toContain("sum(n) n");
+    expect(sql).toContain("SAMPLE BY 1M");
+    expect(sql).not.toContain("avg(site)");
+  });
+  it("stays on the raw table for a same-day (<=26h) window", () => {
+    const sql = flowSeriesSql(WINDOW, TZ, "dev1"); // 24h
+    expect(sql).toContain("avg(site) site_w");
+    expect(sql).not.toContain("power_flows_1h");
+  });
+  it("switches to the rollup just past the 26h threshold", () => {
+    const from = "2026-06-01T06:00:00.000Z";
+    const at26h: TimeWindow = { from, to: "2026-06-02T08:00:00.000Z", bucket: "day" }; // 26h
+    const past26h: TimeWindow = { from, to: "2026-06-02T09:00:00.000Z", bucket: "day" }; // 27h
+    expect(flowSeriesSql(at26h, TZ, null)).not.toContain("power_flows_1h");
+    expect(flowSeriesSql(past26h, TZ, null)).toContain("FROM power_flows_1h");
+  });
 });
 
 describe("freshnessSql", () => {
