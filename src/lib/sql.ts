@@ -36,8 +36,9 @@ function timeRange(window: Pick<TimeWindow, "from" | "to">): string {
 const FLOW_ROLLUP_VIEW = "power_flows_1h";
 
 /**
- * Minimum window length that reads the rollup. 26h keeps every "today" variant
- * (23–25h across DST) on the raw path, while week/month/year go to the rollup.
+ * The rollup is used only for windows strictly longer than this. 26h keeps every
+ * "today" variant (23–25h across DST) on the raw path, while week/month/year go
+ * to the rollup.
  */
 const ROLLUP_MIN_WINDOW_MS = 26 * 60 * 60 * 1000;
 

@@ -171,6 +171,30 @@ describe("flowSeriesSql — hourly rollup routing", () => {
   });
 });
 
+// The raw and rollup projections must expose the same output columns (the
+// transform consumes them by name). This guards the two TS forms against drift;
+// the collector's Go view definition mirrors the raw form and is verified
+// against a live QuestDB separately (the integration probe run when authoring).
+describe("flow projection contract (raw ↔ rollup drift guard)", () => {
+  // Column aliases in a flow SELECT list (between "SELECT " and " FROM").
+  const flowAliases = (sql: string): (string | undefined)[] =>
+    sql
+      .slice(sql.indexOf("SELECT ") + "SELECT ".length, sql.indexOf(" FROM "))
+      .split(",")
+      .map((part) => part.trim().split(/\s+/).pop());
+
+  it("flowSeriesSql yields identical columns on the raw and rollup paths", () => {
+    expect(flowAliases(flowSeriesSql(LONG, TZ, "dev1"))).toEqual(
+      flowAliases(flowSeriesSql(WINDOW, TZ, "dev1")),
+    );
+  });
+  it("flowTotalsSql yields identical columns on the raw and rollup paths", () => {
+    expect(flowAliases(flowTotalsSql(LONG, "dev1"))).toEqual(
+      flowAliases(flowTotalsSql(WINDOW, "dev1")),
+    );
+  });
+});
+
 describe("freshnessSql", () => {
   it("emits one max(ts) select per sentinel table, unioned", () => {
     const sql = freshnessSql(["power_usage", "circuits"]);
