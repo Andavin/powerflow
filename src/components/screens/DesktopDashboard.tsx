@@ -30,6 +30,14 @@ function cardMetrics(series: EnergySeries): Metric[] {
   return series.source === "battery" ? [m(secondary), m(primary)] : [m(primary), m(secondary)];
 }
 
+// Focus ring tinted to each source (color tokens live in globals.css @theme).
+const RING_BY_SOURCE: Record<StatSource, string> = {
+  home: "focus-visible:ring-home/50",
+  solar: "focus-visible:ring-solar/50",
+  battery: "focus-visible:ring-battery/50",
+  grid: "focus-visible:ring-grid/50",
+};
+
 function SourceStatCard({ source }: { source: StatSource }) {
   const { data } = useStats(source, "today");
   const Icon = SOURCE_ICON[source];
@@ -46,7 +54,7 @@ function SourceStatCard({ source }: { source: StatSource }) {
     <Link
       href={`/stats?source=${source}`}
       aria-label={`View ${SOURCE_LABEL[source]} stats`}
-      className="block h-full rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-battery/40"
+      className={`block h-full rounded-2xl focus-visible:outline-none focus-visible:ring-2 ${RING_BY_SOURCE[source]}`}
     >
       <Card className="flex h-full flex-col gap-2 p-4 transition hover:bg-surface-2">
         <div className="flex items-center gap-2 text-sm text-muted">
