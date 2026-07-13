@@ -9,7 +9,9 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -127,6 +129,75 @@ func TestQuestDBWriter_DataErrorIsLoggedNotFatal(t *testing.T) {
 	}
 	if !bytes.Contains(logBuf.Bytes(), []byte("hardware_version")) {
 		t.Errorf("expected the QuestDB error body to be logged, got: %s", logBuf.String())
+	}
+}
+
+// A transport failure (QuestDB unreachable) must retain the batch and replay it
+// on the next successful flush, not drop it. Guards the spool peek/commit path:
+// the payload survives the failed POST and is delivered once the server recovers.
+func TestQuestDBWriter_RetainsAndReplaysOnTransportFailure(t *testing.T) {
+	var down atomic.Bool
+	down.Store(true)
+	var mu sync.Mutex
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if down.Load() {
+			// Simulate a transport failure: drop the connection with no response
+			// so the client's POST returns a non-nil error.
+			hj, ok := w.(http.Hijacker)
+			if !ok {
+				t.Error("test server does not support hijacking")
+				return
+			}
+			conn, _, err := hj.Hijack()
+			if err != nil {
+				t.Errorf("hijack: %v", err)
+				return
+			}
+			conn.Close()
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		got = append(got, string(body))
+		mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	host, portStr, _ := net.SplitHostPort(u.Host)
+	port, _ := strconv.Atoi(portStr)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	qw, err := NewQuestDBWriter(
+		QuestDBConfig{Host: host, HTTPPort: port, ILPPort: port, SpoolDir: t.TempDir()},
+		"dev-1", logger,
+	)
+	if err != nil {
+		t.Fatalf("NewQuestDBWriter: %v", err)
+	}
+
+	// First flush hits the "down" server → transport failure → payload retained.
+	qw.WriteNodeUpdate("core", map[string]interface{}{"l1_voltage": 1.0}, time.Unix(0, 0), true)
+	if err := qw.Flush(); err == nil {
+		t.Fatal("expected a transport-failure error on the first flush")
+	}
+	if !qw.spool.pending() {
+		t.Fatal("payload must be retained after a transport failure, not dropped")
+	}
+
+	// Server recovers; the retry must replay the retained batch and clear the spool.
+	down.Store(false)
+	if err := qw.Flush(); err != nil {
+		t.Fatalf("replay flush error: %v", err)
+	}
+	if qw.spool.pending() {
+		t.Error("spool must be empty after a successful replay")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 1 || !strings.Contains(got[0], "l1_voltage=1") {
+		t.Errorf("server did not receive the replayed payload: %v", got)
 	}
 }
 
