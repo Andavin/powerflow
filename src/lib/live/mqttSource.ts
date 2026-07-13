@@ -10,6 +10,20 @@ import {
 } from "./state";
 import type { LiveSnapshot, LiveSource, MetaProvider } from "./types";
 
+/** Host portion of an mqtt(s):// URL, or "" if it can't be parsed. */
+function hostFromUrl(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "";
+  }
+}
+
+/** True for an IPv4 dotted-quad or an IPv6 literal (where SNI/hostname checks don't apply). */
+function isIpLiteral(host: string): boolean {
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(":");
+}
+
 export interface MqttSourceOptions {
   url: string; // e.g. mqtts://<panel-ip>:8883
   username?: string;
@@ -61,6 +75,14 @@ export class MqttLiveSource implements LiveSource {
     // instances (e.g. a deploy + a dev server) makes them kick each other in a
     // reconnect loop. The random suffix guarantees they never collide.
     const clientId = `${this.opts.clientId}-${Math.random().toString(36).slice(2, 8)}`;
+    // The pinned CA always validates the chain. The cert-hostname check then
+    // depends on how we reach the broker: with a DNS name we keep the default
+    // identity check (a cert issued for a different host under the same CA is
+    // rejected, and set the SNI name so the broker serves the right cert). Only
+    // for a bare IP literal — where a hostname match is impossible — do we fall
+    // back to chain-only trust.
+    const host = hostFromUrl(this.opts.url);
+    const byIp = isIpLiteral(host);
     const options = {
       clientId,
       username: this.opts.username,
@@ -69,10 +91,8 @@ export class MqttLiveSource implements LiveSource {
       connectTimeout: 15_000,
       ca,
       rejectUnauthorized: this.opts.rejectUnauthorized,
-      // With a pinned CA we trust the chain but connect to the broker by IP, so
-      // skip the cert-hostname match. Without a pinned CA, keep the default
-      // identity check so a system-CA cert for another host can't be swapped in.
-      ...(ca ? { checkServerIdentity: () => undefined } : {}),
+      ...(host && !byIp ? { servername: host } : {}),
+      ...(ca && byIp ? { checkServerIdentity: () => undefined } : {}),
     } as mqtt.IClientOptions;
 
     const client = mqtt.connect(this.opts.url, options);

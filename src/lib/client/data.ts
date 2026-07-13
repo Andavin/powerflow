@@ -61,11 +61,24 @@ export function useLiveStream(): LiveState {
     es.addEventListener("flow", onJson(setFlow));
     es.addEventListener("top", onJson(setTop));
     es.addEventListener("circuits", onJson(setCircuits));
-    es.addEventListener("stream-error", (e) => {
-      if (!cancelled) setError((e as MessageEvent).data);
-    });
+    es.onopen = () => {
+      // The connection is live before any data event arrives, so flip the
+      // indicator here — otherwise a quiet panel (no snapshot yet) shows
+      // "Connecting…" indefinitely on a perfectly healthy stream.
+      if (cancelled) return;
+      setConnected(true);
+      setError(null);
+    };
     es.onerror = () => {
-      if (!cancelled) setConnected(false); // EventSource auto-reconnects
+      if (cancelled) return;
+      setConnected(false);
+      // A terminal failure — a non-2xx status (e.g. the route's 503 "live source
+      // unavailable" / 401) or a bad content-type — closes the EventSource for
+      // good, so surface it. Transient drops stay in CONNECTING and auto-
+      // reconnect, so we don't flag those.
+      if (es.readyState === EventSource.CLOSED) {
+        setError("Live data unavailable.");
+      }
     };
 
     return () => {
