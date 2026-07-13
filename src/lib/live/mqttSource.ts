@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { isIP } from "node:net";
 import mqtt from "mqtt";
 import type { Circuit } from "../types";
 import {
@@ -19,9 +20,15 @@ function hostFromUrl(url: string): string {
   }
 }
 
-/** True for an IPv4 dotted-quad or an IPv6 literal (where SNI/hostname checks don't apply). */
+/**
+ * True for an IPv4/IPv6 literal host (where SNI and hostname checks don't
+ * apply). Uses net.isIP for correct validation — a naive regex would misclassify
+ * a numeric-but-invalid hostname (e.g. "999.999.999.999") as an IP and wrongly
+ * skip identity verification.
+ */
 function isIpLiteral(host: string): boolean {
-  return /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(":");
+  // URL.hostname wraps IPv6 in brackets ([::1]); net.isIP wants them stripped.
+  return isIP(host.replace(/^\[|\]$/g, "")) !== 0;
 }
 
 export interface MqttSourceOptions {
