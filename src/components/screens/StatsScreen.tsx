@@ -2,7 +2,7 @@
 import Link from "next/link";
 
 import { useMemo, useState } from "react";
-import { Card, Spinner, StatNumber, ErrorNote } from "@/components/primitives";
+import { Card, DeltaBadge, Spinner, StatNumber, ErrorNote } from "@/components/primitives";
 import { StatsChart } from "@/components/charts/StatsChart";
 import {
   CompareLegend,
@@ -146,14 +146,7 @@ function CircuitBreakdown({
               >
                 <div className="flex items-center justify-between gap-3">
                   <span className="min-w-0 flex-1 truncate">{c.name}</span>
-                  {delta != null && (
-                    <span
-                      className="text-xs tabular-nums"
-                      style={{ color: delta <= 0 ? SOURCE_COLOR.battery : SOURCE_COLOR.solar }}
-                    >
-                      {delta > 0 ? "↑" : "↓"} {Math.abs(delta * 100).toFixed(0)}%
-                    </span>
-                  )}
+                  {delta != null && <DeltaBadge value={delta} className="text-xs tabular-nums" />}
                   {unit === "pct" ? (
                     <StatNumber value={pct.toFixed(pct < 10 ? 1 : 0)} unit="%" color={SOURCE_COLOR.home} />
                   ) : (
@@ -184,7 +177,8 @@ export function StatsScreen() {
   const prev = useStats(source, "custom", { from: prevWin.from, to: prevWin.to }, compare);
 
   // Whole-home source mix for the window (dedupes with the breakdown's fetch).
-  const energy = useCircuitEnergy("custom", { from: win.from, to: win.to });
+  // Only the home tab renders the mix, so don't fetch it for other sources.
+  const energy = useCircuitEnergy("custom", { from: win.from, to: win.to }, source === "home");
   const mix = energy.data?.circuits?.[0]?.mix ?? null;
 
   const delta = useMemo(() => {

@@ -311,6 +311,7 @@ export function homeSourceMix(totalsRow: Row): {
   };
 }
 
-function round3(n: number): number {
+/** Round to 3 decimals (Wh→kWh values carry no meaningful precision beyond it). */
+export function round3(n: number): number {
   return Math.round(n * 1000) / 1000;
 }
