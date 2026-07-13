@@ -323,9 +323,11 @@ func (q *QuestDBWriter) Flush() error {
 	q.pending = make(map[string]bool)
 
 	// Prepend any batches that failed to send during an earlier outage so they
-	// replay ahead of the current one. DEDUP makes re-sending idempotent.
-	payload := q.spool.drain()
-	payload = append(payload, q.buf.Bytes()...)
+	// replay ahead of the current one. DEDUP makes re-sending idempotent. peek
+	// leaves the spool in place — it's only cleared (commit) once QuestDB accepts
+	// the payload, so a crash mid-POST can't lose the retained on-disk portion.
+	current := append([]byte(nil), q.buf.Bytes()...)
+	payload := append(q.spool.peek(), current...)
 	q.buf.Reset()
 	if len(payload) == 0 {
 		return nil
@@ -333,14 +335,19 @@ func (q *QuestDBWriter) Flush() error {
 
 	resp, err := qdbHTTP.Post(q.writeURL, "text/plain; charset=utf-8", bytes.NewReader(payload))
 	if err != nil {
-		// Transport failure — QuestDB unreachable. Retain the whole payload
-		// (spooled + current) for replay instead of dropping it. Per-table
-		// health is left untouched (neither committed nor rejected); LastOK
-		// ages, which the watchdog and /healthz surface.
-		q.spool.enqueue(payload)
+		// Transport failure — QuestDB unreachable. The spooled portion is still
+		// retained (peek didn't clear it); persist the current batch alongside it
+		// so the whole payload survives a crash and replays when QuestDB returns.
+		// Per-table health is left untouched (neither committed nor rejected);
+		// LastOK ages, which the watchdog and /healthz surface.
+		q.spool.enqueue(current)
 		return fmt.Errorf("ILP HTTP write to %s: %w (batch queued for retry)", q.writeURL, err)
 	}
 	defer resp.Body.Close()
+	// The request reached QuestDB — a 2xx, or a non-2xx we deliberately don't
+	// retry (rejected rows are quarantined below, never re-sent). Either way the
+	// peek'd payload is consumed, so clear the spool.
+	q.spool.commit()
 
 	rejected := map[string]bool{}
 	if resp.StatusCode/100 != 2 {
