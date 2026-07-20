@@ -8,7 +8,7 @@ import type {
 } from "./types";
 import type { TimeWindow } from "./time";
 import type { Repository, SocPoint } from "./repository";
-import { assembleEnergySeries } from "./transform";
+import { assembleEnergySeries, round3 } from "./transform";
 
 /**
  * Deterministic in-memory repository.
@@ -200,8 +200,4 @@ function bucketStarts(window: TimeWindow): number[] {
   const out: number[] = [];
   for (let t = from; t < to; t += step) out.push(t);
   return out.length ? out : [from];
-}
-
-function round3(n: number): number {
-  return Math.round(n * 1000) / 1000;
 }

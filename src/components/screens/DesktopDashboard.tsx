@@ -4,7 +4,7 @@ import Link from "next/link";
 import { FlowDiagram } from "@/components/FlowDiagram";
 import { Sparkline } from "@/components/charts/Sparkline";
 import { StatsChart } from "@/components/charts/StatsChart";
-import { Card, Spinner, StatNumber } from "@/components/primitives";
+import { Card, LiveDot, Spinner, StatNumber } from "@/components/primitives";
 import { SOURCE_ICON } from "@/components/icons";
 import { useLiveStream, useStats } from "@/lib/client/data";
 import { sourceMetrics, type SourceMetric } from "@/lib/energy";
@@ -131,13 +131,7 @@ export function DesktopDashboard() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold tracking-tight">Overview</h1>
         <span className="flex items-center gap-2 text-xs text-muted">
-          <span
-            className={`inline-block h-1.5 w-1.5 rounded-full ${connected ? "bg-positive" : "bg-faint"}`}
-            aria-hidden
-          />
-          <span aria-live="polite" aria-atomic="true">
-            {connected ? "Live" : "Connecting…"}
-          </span>
+          <LiveDot connected={connected} />
         </span>
       </div>
 

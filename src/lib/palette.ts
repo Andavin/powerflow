@@ -24,9 +24,8 @@ export const SOURCE_LABEL: Record<StatSource, string> = {
 
 // These mirror CSS tokens in globals.css (@theme) for the Recharts/SVG layer,
 // which can't read Tailwind classes. Keep them in sync with that file:
-//   POSITIVE = --color-positive, NEGATIVE = --color-negative,
-//   AXIS = --color-faint, GRID_LINE = --color-surface-3.
-export const POSITIVE = SOURCE_COLOR.battery; // --color-positive (same teal)
+//   NEGATIVE = --color-negative, AXIS = --color-faint,
+//   GRID_LINE = --color-surface-3.
 export const NEGATIVE = "#ff6b6b";
 export const AXIS = "#5b616c";
 export const GRID_LINE = "#23272f";

@@ -1,5 +1,19 @@
 version: 2
 updates:
+  # Keep the web app's npm (pnpm) dependencies current. Without this the whole
+  # JS tree drifts unmonitored — including security patches like the Next.js
+  # bump that carried the postcss < 8.5.10 fix.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: deps
+    groups:
+      # One PR for all minor/patch bumps; majors still come through singly.
+      npm-minor:
+        update-types: ["minor", "patch"]
+
   # Keep the SHA-pinned GitHub Actions current. Dependabot bumps the pin and
   # updates the trailing "# vX.Y.Z" comment so the pins don't silently rot.
   - package-ecosystem: github-actions

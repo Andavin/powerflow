@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
-import { Card, Spinner, StatNumber, StatusPill } from "@/components/primitives";
+import { Card, DeltaBadge, Spinner, StatNumber, StatusPill } from "@/components/primitives";
 import { StatsChart } from "@/components/charts/StatsChart";
 import {
   CompareLegend,
@@ -33,7 +33,6 @@ function ConfirmDialog({
 }) {
   const titleId = useId();
   const bodyId = useId();
-  const dialogRef = useRef<HTMLDivElement | null>(null);
   const confirmRef = useRef<HTMLButtonElement | null>(null);
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   // Route onCancel through a ref so the keydown listener isn't re-registered
@@ -92,7 +91,6 @@ function ConfirmDialog({
         className="w-full max-w-sm p-5"
       >
         <div
-          ref={dialogRef}
           role="dialog"
           aria-modal="true"
           aria-labelledby={titleId}
@@ -315,11 +313,7 @@ export function CircuitDetail({ id, controlEnabled }: { id: string; controlEnabl
               <StatNumber value={t.value} unit={t.unit} color={SOURCE_COLOR.home} className="text-4xl" />
               <div className="mt-0.5 flex items-center gap-2 text-xs text-muted">
                 <span>{usedWhen}</span>
-                {delta != null && (
-                  <span style={{ color: delta <= 0 ? SOURCE_COLOR.battery : SOURCE_COLOR.solar }}>
-                    {delta > 0 ? "↑" : "↓"} {Math.abs(delta * 100).toFixed(0)}% vs {vsLabel}
-                  </span>
-                )}
+                {delta != null && <DeltaBadge value={delta}> vs {vsLabel}</DeltaBadge>}
               </div>
             </div>
             <StatsChart

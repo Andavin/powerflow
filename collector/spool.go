@@ -76,10 +76,12 @@ func (s *retrySpool) spillToDisk(batch []byte) {
 	}
 }
 
-// drain returns every pending batch (disk first, then memory, oldest-first)
-// concatenated for a single replay POST, and clears the spool. The caller
-// re-enqueues the whole thing if the replay also fails.
-func (s *retrySpool) drain() []byte {
+// peek returns every pending batch (disk first, then memory, oldest-first)
+// concatenated for a single replay POST, WITHOUT clearing the spool. The on-disk
+// overflow stays in place until commit(), so a crash mid-replay can't lose the
+// durable portion. (Draining before the POST was confirmed used to pull the
+// on-disk batches into memory for the whole outage, defeating the spool.)
+func (s *retrySpool) peek() []byte {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -88,13 +90,30 @@ func (s *retrySpool) drain() []byte {
 		if data, err := os.ReadFile(s.path); err == nil && len(data) > 0 {
 			out = append(out, data...)
 		}
-		os.Remove(s.path)
 	}
 	for _, b := range s.batches {
 		out = append(out, b...)
 	}
+	return out
+}
+
+// commit clears the spool once a peek()'d payload has been accepted by QuestDB:
+// it removes the on-disk overflow and drops the in-memory FIFO.
+func (s *retrySpool) commit() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.path != "" {
+		os.Remove(s.path)
+	}
 	s.batches = nil
 	s.memSize = 0
+}
+
+// drain is peek+commit in one call: it returns the pending payload and clears
+// the spool unconditionally. Used where the payload is always consumed (tests).
+func (s *retrySpool) drain() []byte {
+	out := s.peek()
+	s.commit()
 	return out
 }
 

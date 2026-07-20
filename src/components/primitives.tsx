@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { todayStr } from "@/lib/client/tz";
+import { SOURCE_COLOR } from "@/lib/palette";
 
 export function Card({
   children,
@@ -158,6 +159,49 @@ export function Spinner({ className = "" }: { className?: string }) {
       aria-label="Loading"
       className={`inline-block h-6 w-6 animate-spin rounded-full border-2 border-surface-3 border-t-battery ${className}`}
     />
+  );
+}
+
+/**
+ * Live-connection status: a colored dot plus a polite "Live"/"Connecting…"
+ * label. Renders a fragment so callers supply their own wrapper (and any
+ * trailing content, e.g. the flow caption).
+ */
+export function LiveDot({ connected }: { connected: boolean }) {
+  return (
+    <>
+      <span
+        className={`inline-block h-1.5 w-1.5 rounded-full ${connected ? "bg-positive" : "bg-faint"}`}
+        aria-hidden
+      />
+      <span aria-live="polite" aria-atomic="true">
+        {connected ? "Live" : "Connecting…"}
+      </span>
+    </>
+  );
+}
+
+/**
+ * Period-over-period change badge: `↑/↓ NN%`, tinted teal when flat-or-down
+ * (less energy) and amber when up. `children` appends an optional suffix such
+ * as " vs last week" inside the same element.
+ */
+export function DeltaBadge({
+  value,
+  className = "",
+  children,
+}: {
+  value: number;
+  className?: string;
+  children?: ReactNode;
+}) {
+  return (
+    <span
+      className={className}
+      style={{ color: value <= 0 ? SOURCE_COLOR.battery : SOURCE_COLOR.solar }}
+    >
+      {value > 0 ? "↑" : "↓"} {Math.abs(value * 100).toFixed(0)}%{children}
+    </span>
   );
 }
 

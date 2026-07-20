@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { FlowDiagram } from "@/components/FlowDiagram";
-import { Card, Spinner, StatNumber } from "@/components/primitives";
+import { Card, LiveDot, Spinner, StatNumber } from "@/components/primitives";
 import { useLiveStream } from "@/lib/client/data";
 import { formatWatts, formatPercent, splitPower } from "@/lib/format";
 import { SOURCE_COLOR } from "@/lib/palette";
@@ -39,13 +39,7 @@ export function FlowScreen() {
     <div className="mx-auto flex w-full max-w-md flex-col gap-5">
       <div className="flex flex-col items-center pt-2">
         <div className="flex h-5 items-center gap-2 text-xs text-muted">
-          <span
-            className={`inline-block h-1.5 w-1.5 rounded-full ${connected ? "bg-positive" : "bg-faint"}`}
-            aria-hidden
-          />
-          <span aria-live="polite" aria-atomic="true">
-            {connected ? "Live" : "Reconnecting…"}
-          </span>
+          <LiveDot connected={connected} />
           {caption && <span className="text-faint">·</span>}
           {caption && <span>{caption}</span>}
         </div>

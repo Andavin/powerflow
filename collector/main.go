@@ -110,9 +110,13 @@ func main() {
 	energyTracker := NewEnergyTracker(logger)
 
 	// ---- Update channel -----------------------------------------------
-	// MQTT property updates queue per-node writes here.
-	// Blocking send ensures no update is ever dropped.
+	// MQTT property updates queue per-node writes here. Sends are non-blocking
+	// (drop-on-full — see onUpdate). The channel is deliberately never closed:
+	// onUpdate runs on Paho handler goroutines that can still fire briefly after
+	// Disconnect, and a send on a closed channel panics. The writer stops on
+	// writerStop instead, then drains what's buffered.
 	updateCh := make(chan pendingWrite, 1024)
+	writerStop := make(chan struct{})
 
 	// ---- Writer goroutine ---------------------------------------------
 	// Accumulates node updates and flushes to QuestDB on a timer.
@@ -130,17 +134,26 @@ func main() {
 
 		for {
 			select {
-			case pw, ok := <-updateCh:
-				if !ok {
-					// Channel closed — flush remaining and exit
-					flushBatch(batch, qdbWriter, energyTracker, state, strictSchema, pinnedCols, logger, &flushCount)
-					return
-				}
+			case pw := <-updateCh:
 				batch = append(batch, pw)
 
 			case <-ticker.C:
 				flushBatch(batch, qdbWriter, energyTracker, state, strictSchema, pinnedCols, logger, &flushCount)
 				batch = batch[:0]
+
+			case <-writerStop:
+				// Shutdown: the MQTT client is already disconnected, so no more
+				// updates are coming. Drain whatever is still buffered, do a
+				// final flush, and exit.
+				for {
+					select {
+					case pw := <-updateCh:
+						batch = append(batch, pw)
+					default:
+						flushBatch(batch, qdbWriter, energyTracker, state, strictSchema, pinnedCols, logger, &flushCount)
+						return
+					}
+				}
 			}
 		}
 	}()
@@ -226,10 +239,13 @@ func main() {
 	if healthSrv != nil {
 		healthSrv.Close()
 	}
-	close(updateCh)
+	// Disconnect the MQTT client first so no more updates are queued, THEN stop
+	// the writer. updateCh is never closed, so a late Paho handler goroutine that
+	// slips past Disconnect still can't panic on send — it just drops or buffers.
+	client.Disconnect(1000)
+	close(writerStop)
 	writerWg.Wait()
 	qdbWriter.Close()
-	client.Disconnect(1000)
 	logger.Info("shutdown complete")
 }
 
