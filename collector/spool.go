@@ -54,26 +54,50 @@ func (s *retrySpool) enqueue(batch []byte) {
 	}
 }
 
-// spillToDisk appends a batch to the overflow file, honoring the file cap. Must
-// hold s.mu. Loss (disk disabled or file full) is logged, never silent.
-func (s *retrySpool) spillToDisk(batch []byte) {
+// spillToDisk appends a batch to the overflow file, honoring the file cap, and
+// returns the bytes written (0 if the batch was dropped). Must hold s.mu. Loss
+// (disk disabled or file full) is logged, never silent.
+func (s *retrySpool) spillToDisk(batch []byte) int {
 	if s.path == "" {
 		s.logger.Warn("retry buffer full and no spool dir; dropping oldest batch", "bytes", len(batch))
-		return
+		return 0
 	}
 	if fi, err := os.Stat(s.path); err == nil && int(fi.Size())+len(batch) > s.fileCap {
 		s.logger.Warn("retry spool file full; dropping oldest batch", "bytes", len(batch), "file", s.path)
-		return
+		return 0
 	}
 	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		s.logger.Warn("cannot open retry spool file; dropping oldest batch", "error", err)
-		return
+		return 0
 	}
 	defer f.Close()
 	if _, err := f.Write(batch); err != nil {
 		s.logger.Warn("cannot write retry spool file; dropping oldest batch", "error", err)
+		return 0
 	}
+	return len(batch)
+}
+
+// persist flushes all in-memory batches to the on-disk overflow file so a
+// graceful shutdown during a QuestDB outage doesn't lose them: on the next start
+// peek() replays them from disk. Returns the bytes actually written to disk (0
+// when disk overflow is disabled or nothing is buffered). Honors the file cap
+// via spillToDisk, which logs any drop. When disk overflow is disabled the
+// in-memory batches are left untouched (nothing durable we can do).
+func (s *retrySpool) persist() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.path == "" || len(s.batches) == 0 {
+		return 0
+	}
+	n := 0
+	for _, b := range s.batches {
+		n += s.spillToDisk(b)
+	}
+	s.batches = nil
+	s.memSize = 0
+	return n
 }
 
 // peek returns every pending batch (disk first, then memory, oldest-first)

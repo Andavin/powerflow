@@ -189,6 +189,13 @@ questdb: { write_interval: "10ms" }`,
 			"questdb.write_interval must be >= 100ms",
 		},
 		{
+			"bad spool_mem_cap",
+			`mqtt: { server: "x", client_id: "x" }
+span: { device_id: "x" }
+questdb: { spool_mem_cap: "huge" }`,
+			"invalid questdb.spool_mem_cap",
+		},
+		{
 			"invalid YAML",
 			`{{invalid`,
 			"parse config",
@@ -291,5 +298,78 @@ func TestParseConfigInvalidEnvInt(t *testing.T) {
 	t.Setenv("SPAN_MQTT_PORT", "not-a-number")
 	if _, err := ParseConfig(nil); err == nil {
 		t.Fatal("expected an error for a non-numeric SPAN_MQTT_PORT")
+	}
+}
+
+func TestParseByteSize(t *testing.T) {
+	tests := []struct {
+		in   string
+		want int
+		err  bool
+	}{
+		{"", 999, false}, // empty → default
+		{"0", 0, false},
+		{"1024", 1024, false},
+		{"1KiB", 1024, false},
+		{"1 KiB", 1024, false},
+		{"32MiB", 32 << 20, false},
+		{"2gib", 2 << 30, false},
+		{"512KB", 512 << 10, false},
+		{"8B", 8, false},
+		{"-1", 0, true},
+		{"notasize", 0, true},
+		{"12MB34", 0, true},
+	}
+	for _, tt := range tests {
+		got, err := parseByteSize(tt.in, 999)
+		if tt.err {
+			if err == nil {
+				t.Errorf("parseByteSize(%q) expected an error", tt.in)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("parseByteSize(%q) unexpected error: %v", tt.in, err)
+		}
+		if got != tt.want {
+			t.Errorf("parseByteSize(%q) = %d, want %d", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestParseConfigSpoolCaps(t *testing.T) {
+	base := "mqtt: { server: x, client_id: x }\nspan: { device_id: x }\n"
+
+	// Unset → the built-in defaults.
+	cfg, err := ParseConfig([]byte(base))
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if cfg.QuestDB.parsedMemCap != spoolMemCap || cfg.QuestDB.parsedFileCap != spoolFileCap {
+		t.Errorf("default caps = %d/%d, want %d/%d",
+			cfg.QuestDB.parsedMemCap, cfg.QuestDB.parsedFileCap, spoolMemCap, spoolFileCap)
+	}
+
+	// Explicit values from the file.
+	cfg, err = ParseConfig([]byte(base + `questdb: { spool_mem_cap: "1MiB", spool_file_cap: "8MiB" }` + "\n"))
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if cfg.QuestDB.parsedMemCap != 1<<20 || cfg.QuestDB.parsedFileCap != 8<<20 {
+		t.Errorf("caps = %d/%d, want %d/%d",
+			cfg.QuestDB.parsedMemCap, cfg.QuestDB.parsedFileCap, 1<<20, 8<<20)
+	}
+}
+
+func TestParseConfigSpoolCapEnvOverride(t *testing.T) {
+	t.Setenv("SPAN_MQTT_SERVER", "x")
+	t.Setenv("SPAN_DEVICE_ID", "dev")
+	t.Setenv("SPAN_QUESTDB_SPOOL_MEM_CAP", "256KiB")
+	cfg, err := ParseConfig(nil)
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if cfg.QuestDB.parsedMemCap != 256<<10 {
+		t.Errorf("mem cap = %d, want %d", cfg.QuestDB.parsedMemCap, 256<<10)
 	}
 }

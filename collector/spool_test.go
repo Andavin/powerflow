@@ -89,3 +89,46 @@ func TestRetrySpoolPeekKeepsDiskUntilCommit(t *testing.T) {
 		t.Errorf("commit must remove the disk spool file, stat err = %v", err)
 	}
 }
+
+// persist must write the in-memory backlog to disk so a fresh spool over the
+// same path replays it — the graceful-shutdown-during-outage durability
+// guarantee. Uses a normal (large) mem cap: nothing spills on its own, so this
+// isolates persist() rather than the enqueue overflow path.
+func TestRetrySpoolPersistToDisk(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "retry.ilp")
+	s := newRetrySpool(path, spoolMemCap, spoolFileCap, testLogger())
+	s.enqueue([]byte("a\n"))
+	s.enqueue([]byte("b\n"))
+
+	// Under the mem cap: nothing on disk yet.
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("expected no disk file before persist, stat err = %v", err)
+	}
+	if n := s.persist(); n != 4 {
+		t.Errorf("persist wrote %d bytes, want 4", n)
+	}
+
+	// A brand-new spool over the same path must recover the batches from disk.
+	s2 := newRetrySpool(path, spoolMemCap, spoolFileCap, testLogger())
+	if !s2.pending() {
+		t.Fatal("persisted batches must be pending for a fresh spool")
+	}
+	if got := string(s2.peek()); got != "a\nb\n" {
+		t.Errorf("recovered payload = %q, want %q", got, "a\nb\n")
+	}
+}
+
+// persist is a no-op that keeps the memory backlog when disk overflow is
+// disabled (no dir): there's nothing durable to do, but it must not drop data
+// or panic.
+func TestRetrySpoolPersistNoDir(t *testing.T) {
+	s := newRetrySpool("", spoolMemCap, spoolFileCap, testLogger())
+	s.enqueue([]byte("x\n"))
+	if n := s.persist(); n != 0 {
+		t.Errorf("persist with no dir wrote %d bytes, want 0", n)
+	}
+	if !s.pending() {
+		t.Error("batch should remain pending in memory when there's no spool dir")
+	}
+}

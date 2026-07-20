@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -198,6 +200,33 @@ func TestQuestDBWriter_RetainsAndReplaysOnTransportFailure(t *testing.T) {
 	defer mu.Unlock()
 	if len(got) != 1 || !strings.Contains(got[0], "l1_voltage=1") {
 		t.Errorf("server did not receive the replayed payload: %v", got)
+	}
+}
+
+// Close must persist an unsent batch to the spool file when QuestDB is
+// unreachable, so a graceful shutdown mid-outage replays it on restart instead
+// of losing it.
+func TestQuestDBWriter_ClosePersistsSpoolOnOutage(t *testing.T) {
+	dir := t.TempDir()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	// Port 1 is not listening → the final flush is a transport failure.
+	w, err := NewQuestDBWriter(
+		QuestDBConfig{Host: "127.0.0.1", HTTPPort: 1, ILPPort: 1, SpoolDir: dir},
+		"dev-1", logger,
+	)
+	if err != nil {
+		t.Fatalf("NewQuestDBWriter: %v", err)
+	}
+
+	w.WriteNodeUpdate("core", map[string]interface{}{"l1_voltage": 1.0}, time.Unix(0, 0), true)
+	_ = w.Close() // flush fails (unreachable); the batch must be persisted, not lost
+
+	data, err := os.ReadFile(filepath.Join(dir, "retry.ilp"))
+	if err != nil {
+		t.Fatalf("Close must persist the unsent batch to disk: %v", err)
+	}
+	if !strings.Contains(string(data), "l1_voltage=1") {
+		t.Errorf("persisted spool missing the batch: %q", data)
 	}
 }
 
