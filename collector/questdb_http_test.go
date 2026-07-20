@@ -230,6 +230,32 @@ func TestQuestDBWriter_ClosePersistsSpoolOnOutage(t *testing.T) {
 	}
 }
 
+// Close with no spool_dir and QuestDB unreachable must stay loud but safe: it
+// can't persist the batch (memory-only), so it logs the unavoidable loss, does
+// not panic, and leaves the batch pending in memory rather than dropping it.
+func TestQuestDBWriter_CloseWithoutSpoolDirLogsLoss(t *testing.T) {
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	// Empty SpoolDir → memory-only; port 1 → the final flush is a transport failure.
+	w, err := NewQuestDBWriter(
+		QuestDBConfig{Host: "127.0.0.1", HTTPPort: 1, ILPPort: 1, SpoolDir: ""},
+		"dev-1", logger,
+	)
+	if err != nil {
+		t.Fatalf("NewQuestDBWriter: %v", err)
+	}
+
+	w.WriteNodeUpdate("core", map[string]interface{}{"l1_voltage": 1.0}, time.Unix(0, 0), true)
+	_ = w.Close() // must not panic
+
+	if !w.spool.pending() {
+		t.Error("batch must remain pending in memory when it can't be persisted, not dropped")
+	}
+	if !bytes.Contains(logBuf.Bytes(), []byte("no questdb.spool_dir")) {
+		t.Errorf("expected a loud data-loss log for the no-spool_dir path, got: %s", logBuf.String())
+	}
+}
+
 // The constructor must not require a live server (HTTP client connects lazily),
 // so a writer can be created even when QuestDB is briefly unreachable.
 func TestNewQuestDBWriter_DoesNotDial(t *testing.T) {
