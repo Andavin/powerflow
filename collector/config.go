@@ -380,19 +380,22 @@ func envBool(key string, dst *bool) error {
 }
 
 // parseByteSize parses a human byte size into a byte count. An empty string
-// yields def. Units are binary (KiB=1024, MiB=1024², GiB=1024³); a plain number
-// or a "B" suffix is raw bytes. Case-insensitive. Negatives are rejected.
+// yields def. Units are binary: KiB=1024, MiB=1024², GiB=1024³; the decimal
+// spellings KB/MB/GB are accepted as case-insensitive aliases for those same
+// binary units, and a plain number or a "B" suffix is raw bytes. Negatives are
+// rejected, as are values above 1 TiB (which also guards the scaling below from
+// overflowing).
 func parseByteSize(s string, def int) (int, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return def, nil
 	}
 	up := strings.ToUpper(s)
-	mult := 1
+	var mult int64 = 1
 	// Longer (binary) suffixes first so "MIB" isn't matched by the "B" rule.
 	for _, u := range []struct {
 		suffix string
-		mult   int
+		mult   int64
 	}{
 		{"GIB", 1 << 30}, {"MIB", 1 << 20}, {"KIB", 1 << 10},
 		{"GB", 1 << 30}, {"MB", 1 << 20}, {"KB", 1 << 10}, {"B", 1},
@@ -403,14 +406,20 @@ func parseByteSize(s string, def int) (int, error) {
 			break
 		}
 	}
-	n, err := strconv.Atoi(up)
+	n, err := strconv.ParseInt(up, 10, 64)
 	if err != nil {
 		return 0, fmt.Errorf("not a byte size (e.g. %q): %q", "32MiB", s)
 	}
 	if n < 0 {
 		return 0, fmt.Errorf("must be >= 0, got %d", n)
 	}
-	return n * mult, nil
+	// Bound well below the int64/int limits so n*mult can't overflow; 1 TiB is
+	// far above any sane spool cap.
+	const maxBytes = int64(1) << 40
+	if n > maxBytes/mult {
+		return 0, fmt.Errorf("byte size exceeds the 1TiB maximum: %q", s)
+	}
+	return int(n * mult), nil
 }
 
 func (c *Config) validate() error {
@@ -445,6 +454,15 @@ func (c *Config) validate() error {
 	}
 	if c.QuestDB.parsed < 100*time.Millisecond {
 		return fmt.Errorf("questdb.write_interval must be >= 100ms")
+	}
+	// Caps are always positive after parsing (an unset value resolves to the
+	// default). An explicit 0 is rejected here rather than silently defaulted, so
+	// there's no ambiguity between "unset" and "zero".
+	if c.QuestDB.parsedMemCap <= 0 {
+		return fmt.Errorf("questdb.spool_mem_cap must be > 0")
+	}
+	if c.QuestDB.parsedFileCap <= 0 {
+		return fmt.Errorf("questdb.spool_file_cap must be > 0")
 	}
 	return nil
 }

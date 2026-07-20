@@ -196,6 +196,20 @@ questdb: { spool_mem_cap: "huge" }`,
 			"invalid questdb.spool_mem_cap",
 		},
 		{
+			"bad spool_file_cap",
+			`mqtt: { server: "x", client_id: "x" }
+span: { device_id: "x" }
+questdb: { spool_file_cap: "huge" }`,
+			"invalid questdb.spool_file_cap",
+		},
+		{
+			"zero spool_mem_cap rejected (not silently defaulted)",
+			`mqtt: { server: "x", client_id: "x" }
+span: { device_id: "x" }
+questdb: { spool_mem_cap: "0" }`,
+			"questdb.spool_mem_cap must be > 0",
+		},
+		{
 			"invalid YAML",
 			`{{invalid`,
 			"parse config",
@@ -313,10 +327,13 @@ func TestParseByteSize(t *testing.T) {
 		{"1KiB", 1024, false},
 		{"1 KiB", 1024, false},
 		{"32MiB", 32 << 20, false},
+		{" 32MiB ", 32 << 20, false}, // surrounding whitespace tolerated
 		{"2gib", 2 << 30, false},
 		{"512KB", 512 << 10, false},
 		{"8B", 8, false},
 		{"-1", 0, true},
+		{"-1MiB", 0, true},   // negative with a unit
+		{"2000GiB", 0, true}, // above the 1TiB overflow guard
 		{"notasize", 0, true},
 		{"12MB34", 0, true},
 	}

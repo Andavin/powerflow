@@ -132,3 +132,29 @@ func TestRetrySpoolPersistNoDir(t *testing.T) {
 		t.Error("batch should remain pending in memory when there's no spool dir")
 	}
 }
+
+// persist with a file cap smaller than the backlog must write only what fits
+// (spillToDisk logs + drops the rest) yet still clear the in-memory backlog, so
+// a shutdown never leaves data stuck in memory. Locks in the truncation
+// semantics for this edge case.
+func TestRetrySpoolPersistTruncatesToFileCap(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "retry.ilp")
+	// Large mem cap (nothing auto-spills) but a tiny file cap: only the first
+	// 5-byte batch fits, the second overflows the cap and is dropped on persist.
+	s := newRetrySpool(path, spoolMemCap, 6, testLogger())
+	s.enqueue([]byte("aaaa\n")) // 5 bytes
+	s.enqueue([]byte("bbbb\n")) // 5 bytes → 10 > 6 cap → dropped
+
+	if n := s.persist(); n != 5 {
+		t.Errorf("persist wrote %d bytes, want 5 (only the first batch fits)", n)
+	}
+	// The in-memory backlog must be cleared regardless of the disk-side drop.
+	if len(s.batches) != 0 || s.memSize != 0 {
+		t.Errorf("persist must clear memory, have %d batches / %d bytes", len(s.batches), s.memSize)
+	}
+	// Only the batch that fit the cap is durable on disk.
+	if got := string(s.peek()); got != "aaaa\n" {
+		t.Errorf("disk payload = %q, want %q", got, "aaaa\n")
+	}
+}

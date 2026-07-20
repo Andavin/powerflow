@@ -245,9 +245,10 @@ func NewQuestDBWriter(cfg QuestDBConfig, deviceID string, logger *slog.Logger) (
 		spoolPath = filepath.Join(cfg.SpoolDir, "retry.ilp")
 	}
 
-	// Caps come from config (parsed in ParseConfig). Fall back to the built-in
-	// defaults when a writer is constructed directly (e.g. tests) without going
-	// through ParseConfig, which leaves the parsed fields at their zero value.
+	// Caps come from config, where ParseConfig+validate guarantee they're
+	// positive. Fall back to the built-in defaults only when a writer is
+	// constructed directly (e.g. tests) without ParseConfig, which leaves the
+	// parsed fields at their zero value — so this never masks a real setting.
 	memCap := cfg.parsedMemCap
 	if memCap <= 0 {
 		memCap = spoolMemCap
