@@ -104,8 +104,18 @@ type QuestDBConfig struct {
 	// outage overflow to disk (in-memory retry always happens). Empty keeps
 	// retries in memory only. Mount it on a volume to survive restarts.
 	SpoolDir string `yaml:"spool_dir"`
+	// SpoolMemCap bounds how much failed-batch data is retained in memory before
+	// the oldest spills to the on-disk overflow file (needs spool_dir). A binary
+	// size like "32MiB" (default). Lower it (e.g. "256KiB") so buffered data
+	// reaches disk sooner — more survives a collector restart during an outage.
+	SpoolMemCap string `yaml:"spool_mem_cap"`
+	// SpoolFileCap bounds the on-disk overflow file so a long outage can't fill
+	// the disk. Binary size, default "256MiB".
+	SpoolFileCap string `yaml:"spool_file_cap"`
 
-	parsed time.Duration
+	parsed        time.Duration
+	parsedMemCap  int
+	parsedFileCap int
 }
 
 type LoggingConfig struct {
@@ -262,6 +272,18 @@ func ParseConfig(data []byte) (*Config, error) {
 	}
 	cfg.QuestDB.parsed = dur
 
+	memCap, err := parseByteSize(cfg.QuestDB.SpoolMemCap, spoolMemCap)
+	if err != nil {
+		return nil, fmt.Errorf("invalid questdb.spool_mem_cap %q: %w", cfg.QuestDB.SpoolMemCap, err)
+	}
+	cfg.QuestDB.parsedMemCap = memCap
+
+	fileCap, err := parseByteSize(cfg.QuestDB.SpoolFileCap, spoolFileCap)
+	if err != nil {
+		return nil, fmt.Errorf("invalid questdb.spool_file_cap %q: %w", cfg.QuestDB.SpoolFileCap, err)
+	}
+	cfg.QuestDB.parsedFileCap = fileCap
+
 	if cfg.Span.ReadinessGrace == "" {
 		cfg.Span.parsedReadinessGrace = 3 * time.Second
 	} else {
@@ -307,6 +329,8 @@ func applyEnvOverrides(cfg *Config) error {
 	}
 	envStr("SPAN_QUESTDB_WRITE_INTERVAL", &cfg.QuestDB.WriteInterval)
 	envStr("SPAN_QUESTDB_SPOOL_DIR", &cfg.QuestDB.SpoolDir)
+	envStr("SPAN_QUESTDB_SPOOL_MEM_CAP", &cfg.QuestDB.SpoolMemCap)
+	envStr("SPAN_QUESTDB_SPOOL_FILE_CAP", &cfg.QuestDB.SpoolFileCap)
 	if err := envBool("SPAN_QUESTDB_CREATE_TABLES", &cfg.QuestDB.CreateTables); err != nil {
 		return err
 	}
@@ -355,6 +379,49 @@ func envBool(key string, dst *bool) error {
 	return nil
 }
 
+// parseByteSize parses a human byte size into a byte count. An empty string
+// yields def. Units are binary: KiB=1024, MiB=1024², GiB=1024³; the decimal
+// spellings KB/MB/GB are accepted as case-insensitive aliases for those same
+// binary units, and a plain number or a "B" suffix is raw bytes. Negatives are
+// rejected, as are values above 1 TiB (which also guards the scaling below from
+// overflowing).
+func parseByteSize(s string, def int) (int, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return def, nil
+	}
+	up := strings.ToUpper(s)
+	var mult int64 = 1
+	// Longer (binary) suffixes first so "MIB" isn't matched by the "B" rule.
+	for _, u := range []struct {
+		suffix string
+		mult   int64
+	}{
+		{"GIB", 1 << 30}, {"MIB", 1 << 20}, {"KIB", 1 << 10},
+		{"GB", 1 << 30}, {"MB", 1 << 20}, {"KB", 1 << 10}, {"B", 1},
+	} {
+		if strings.HasSuffix(up, u.suffix) {
+			mult = u.mult
+			up = strings.TrimSpace(strings.TrimSuffix(up, u.suffix))
+			break
+		}
+	}
+	n, err := strconv.ParseInt(up, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("not a byte size (e.g. %q): %q", "32MiB", s)
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("must be >= 0, got %d", n)
+	}
+	// Bound well below the int64/int limits so n*mult can't overflow; 1 TiB is
+	// far above any sane spool cap.
+	const maxBytes = int64(1) << 40
+	if n > maxBytes/mult {
+		return 0, fmt.Errorf("byte size exceeds the 1TiB maximum: %q", s)
+	}
+	return int(n * mult), nil
+}
+
 func (c *Config) validate() error {
 	if c.MQTT.Server == "" {
 		return fmt.Errorf("mqtt.server is required")
@@ -387,6 +454,15 @@ func (c *Config) validate() error {
 	}
 	if c.QuestDB.parsed < 100*time.Millisecond {
 		return fmt.Errorf("questdb.write_interval must be >= 100ms")
+	}
+	// Caps are always positive after parsing (an unset value resolves to the
+	// default). An explicit 0 is rejected here rather than silently defaulted, so
+	// there's no ambiguity between "unset" and "zero".
+	if c.QuestDB.parsedMemCap <= 0 {
+		return fmt.Errorf("questdb.spool_mem_cap must be > 0")
+	}
+	if c.QuestDB.parsedFileCap <= 0 {
+		return fmt.Errorf("questdb.spool_file_cap must be > 0")
 	}
 	return nil
 }

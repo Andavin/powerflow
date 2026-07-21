@@ -54,8 +54,16 @@ questdb:
   write_interval: "5s"
   # Optional: directory where batches that fail to send during a QuestDB outage
   # overflow to disk (in-memory retry always happens). Mount a volume to survive
-  # restarts. Empty = memory-only retry.
+  # restarts. Empty = memory-only retry. A graceful shutdown also flushes the
+  # in-memory backlog here, so a restart mid-outage replays it instead of
+  # losing it — set this to a mounted volume if you can't afford to lose data.
   spool_dir: ""
+  # Retry-spool caps (binary sizes). Recent failed batches stay in memory up to
+  # spool_mem_cap; older ones overflow to spool_dir, bounded by spool_file_cap.
+  # Lower spool_mem_cap (e.g. "256KiB") so buffered data reaches disk sooner and
+  # more survives a collector restart during an outage.
+  spool_mem_cap: "32MiB"
+  spool_file_cap: "256MiB"
 
 # Health / alerting (collector only; the self-restart watchdog runs regardless).
 health:

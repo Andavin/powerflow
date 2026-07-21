@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -198,6 +200,59 @@ func TestQuestDBWriter_RetainsAndReplaysOnTransportFailure(t *testing.T) {
 	defer mu.Unlock()
 	if len(got) != 1 || !strings.Contains(got[0], "l1_voltage=1") {
 		t.Errorf("server did not receive the replayed payload: %v", got)
+	}
+}
+
+// Close must persist an unsent batch to the spool file when QuestDB is
+// unreachable, so a graceful shutdown mid-outage replays it on restart instead
+// of losing it.
+func TestQuestDBWriter_ClosePersistsSpoolOnOutage(t *testing.T) {
+	dir := t.TempDir()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	// Port 1 is not listening → the final flush is a transport failure.
+	w, err := NewQuestDBWriter(
+		QuestDBConfig{Host: "127.0.0.1", HTTPPort: 1, ILPPort: 1, SpoolDir: dir},
+		"dev-1", logger,
+	)
+	if err != nil {
+		t.Fatalf("NewQuestDBWriter: %v", err)
+	}
+
+	w.WriteNodeUpdate("core", map[string]interface{}{"l1_voltage": 1.0}, time.Unix(0, 0), true)
+	_ = w.Close() // flush fails (unreachable); the batch must be persisted, not lost
+
+	data, err := os.ReadFile(filepath.Join(dir, "retry.ilp"))
+	if err != nil {
+		t.Fatalf("Close must persist the unsent batch to disk: %v", err)
+	}
+	if !strings.Contains(string(data), "l1_voltage=1") {
+		t.Errorf("persisted spool missing the batch: %q", data)
+	}
+}
+
+// Close with no spool_dir and QuestDB unreachable must stay loud but safe: it
+// can't persist the batch (memory-only), so it logs the unavoidable loss, does
+// not panic, and leaves the batch pending in memory rather than dropping it.
+func TestQuestDBWriter_CloseWithoutSpoolDirLogsLoss(t *testing.T) {
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	// Empty SpoolDir → memory-only; port 1 → the final flush is a transport failure.
+	w, err := NewQuestDBWriter(
+		QuestDBConfig{Host: "127.0.0.1", HTTPPort: 1, ILPPort: 1, SpoolDir: ""},
+		"dev-1", logger,
+	)
+	if err != nil {
+		t.Fatalf("NewQuestDBWriter: %v", err)
+	}
+
+	w.WriteNodeUpdate("core", map[string]interface{}{"l1_voltage": 1.0}, time.Unix(0, 0), true)
+	_ = w.Close() // must not panic
+
+	if !w.spool.pending() {
+		t.Error("batch must remain pending in memory when it can't be persisted, not dropped")
+	}
+	if !bytes.Contains(logBuf.Bytes(), []byte("no questdb.spool_dir")) {
+		t.Errorf("expected a loud data-loss log for the no-spool_dir path, got: %s", logBuf.String())
 	}
 }
 

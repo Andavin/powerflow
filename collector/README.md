@@ -89,6 +89,8 @@ If the file is missing the collector runs entirely from built-in defaults plus
 | `span.readiness_grace` | How long to wait for all of a node's described properties before flushing its first row |
 | `questdb.host` / `http_port` | QuestDB (DDL + ILP-on-HTTP ingestion) |
 | `questdb.write_interval` | Flush cadence |
+| `questdb.spool_dir` | Disk-overflow dir for the retry spool (empty = memory only) |
+| `questdb.spool_mem_cap` / `spool_file_cap` | Retry-spool memory / disk caps, binary sizes (default `32MiB` / `256MiB`) |
 | `health.port` | Port for `GET /healthz` (0 disables) |
 | `health.alert_webhook` | Optional URL POSTed on degrade/recovery (e.g. an `ntfy.sh` topic) |
 
@@ -110,6 +112,9 @@ stop ingestion:
 - **Retry spool** — batches that fail to send during a QuestDB outage are
   retained (in memory, overflowing to `questdb.spool_dir` on disk) and replayed
   when it returns, so a restart/blip doesn't lose data. DEDUP makes replay safe.
+  A graceful shutdown flushes the in-memory backlog to `spool_dir` too, so a
+  restart *during* an outage replays it rather than losing it (needs a
+  `spool_dir` on a mounted volume; lower `spool_mem_cap` to persist sooner).
 - **Watchdog** — the process exits for a supervisor restart on total MQTT
   silence *or* a table that keeps rejecting writes, so a stall self-recovers.
 - **`/healthz`** — reports per-table last-write and rejection streaks (200/503);

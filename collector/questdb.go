@@ -245,6 +245,19 @@ func NewQuestDBWriter(cfg QuestDBConfig, deviceID string, logger *slog.Logger) (
 		spoolPath = filepath.Join(cfg.SpoolDir, "retry.ilp")
 	}
 
+	// Caps come from config, where ParseConfig+validate guarantee they're
+	// positive. Fall back to the built-in defaults only when a writer is
+	// constructed directly (e.g. tests) without ParseConfig, which leaves the
+	// parsed fields at their zero value — so this never masks a real setting.
+	memCap := cfg.parsedMemCap
+	if memCap <= 0 {
+		memCap = spoolMemCap
+	}
+	fileCap := cfg.parsedFileCap
+	if fileCap <= 0 {
+		fileCap = spoolFileCap
+	}
+
 	return &QuestDBWriter{
 		cfg:      cfg,
 		deviceID: deviceID,
@@ -255,7 +268,7 @@ func NewQuestDBWriter(cfg QuestDBConfig, deviceID string, logger *slog.Logger) (
 		pending:    make(map[string]bool),
 		health:     make(map[string]*tableHealth),
 		nowFn:      time.Now,
-		spool:      newRetrySpool(spoolPath, spoolMemCap, spoolFileCap, log),
+		spool:      newRetrySpool(spoolPath, memCap, fileCap, log),
 	}, nil
 }
 
@@ -549,14 +562,28 @@ func (q *QuestDBWriter) writeEnergyDelta(d *EnergyDelta, ts time.Time) {
 	}
 }
 
-// Close flushes any buffered batch so it reaches QuestDB before shutdown. A
-// failure here means that final batch is lost, so log it loudly.
+// Close flushes any buffered batch so it reaches QuestDB before shutdown, then
+// persists anything still awaiting retry to the on-disk spool so a graceful
+// restart replays it instead of losing it. Returns the flush error (if any).
 func (q *QuestDBWriter) Close() error {
-	if err := q.Flush(); err != nil {
-		q.logger.Error("final ILP flush failed; buffered batch lost", "error", err)
-		return err
+	err := q.Flush()
+	if err != nil {
+		// QuestDB was unreachable for the final flush; the batch is now in the
+		// spool. Don't return yet — persist it below before surfacing the error.
+		q.logger.Error("final ILP flush failed; retaining batch for replay on restart", "error", err)
 	}
-	return nil
+	// Persist any in-memory retry backlog (the just-failed batch plus any earlier
+	// outage batches) to disk so it survives this shutdown and replays on restart.
+	// A successful flush clears the spool, so this is a no-op in the happy path.
+	if q.spool.pending() {
+		if n := q.spool.persist(); n > 0 {
+			q.logger.Warn("persisted unsent batches to the retry spool for replay on restart", "bytes", n)
+		} else if q.cfg.SpoolDir == "" {
+			q.logger.Error("unsent batches cannot be persisted (no questdb.spool_dir); they are lost on exit",
+				"hint", "set questdb.spool_dir to a mounted volume so a restart mid-outage keeps data")
+		}
+	}
+	return err
 }
 
 // ---------------------------------------------------------------------------
