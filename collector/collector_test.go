@@ -257,4 +257,3 @@ func TestHandleChildDeviceTopicIgnored(t *testing.T) {
 		t.Error("onUpdate should not have been called for ignored topics")
 	}
 }
-

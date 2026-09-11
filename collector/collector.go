@@ -84,6 +84,22 @@ func parseTopic(topicBase, fullTopic string) topicResult {
 	return topicResult{Node: node, Property: property}
 }
 
+// flatChildProp maps a child device's Homie sub-node/property pair to the flat
+// property name the QuestDB schema and energy tracker expect.
+//
+// Only circuits need per-node prefixing: they carry seven sub-nodes whose
+// properties historically had distinct prefixed column names. The lugs, BESS
+// and MID devices each have a handful of sub-nodes whose property names are
+// already unique within the device and already match their historical columns,
+// so those pass through unchanged (meter/active-power → active_power,
+// soc/soe → soe, grid/grid-state → grid_state).
+func flatChildProp(devType, node, property string) string {
+	if devType == "circuit" {
+		return flatCircuitProp(node, property)
+	}
+	return property
+}
+
 // flatCircuitProp maps a Homie 5 circuit device's sub-node/property pair to a
 // flat property name compatible with the circuits table and energy tracker.
 //
@@ -131,12 +147,22 @@ func (c *Collector) handleChildDeviceTopic(topic string, payload []byte) {
 		return
 	}
 	deviceUUID := rest[:firstSlash]
-	if deviceUUID == c.deviceID {
-		return // already handled by the panel-device path
+	if deviceUUID == "" || deviceUUID == c.deviceID {
+		// A "+" wildcard matches a zero-length level, so an empty device ID is
+		// reachable; it would otherwise be written as an empty node_id symbol.
+		return
 	}
 	subpath := rest[firstSlash+1:]
 
-	// Skip Homie system topics ($description, $state, etc.)
+	// A child device's own $description declares its type, which is what routes
+	// it to the right table. Without this the panel's whole-house lugs meters
+	// and the BESS are indistinguishable from a household circuit.
+	if subpath == "$description" {
+		c.state.SetChildDescription(deviceUUID, payload)
+		return
+	}
+
+	// Skip the remaining Homie system topics ($state, $nodes, ...)
 	if strings.HasPrefix(subpath, "$") {
 		return
 	}
@@ -154,14 +180,14 @@ func (c *Collector) handleChildDeviceTopic(topic string, payload []byte) {
 		return
 	}
 
-	flatProp := flatCircuitProp(node, property)
+	flatProp := flatChildProp(c.state.ChildType(deviceUUID), node, property)
 	ur := c.state.Update(deviceUUID, flatProp, payload)
 
 	if c.onUpdate != nil && ur.Ready {
 		c.onUpdate(ur)
 	}
 
-	c.logger.Debug("circuit device updated",
+	c.logger.Debug("child device updated",
 		"device", deviceUUID,
 		"node", node,
 		"property", property,

@@ -58,7 +58,7 @@ func TestQuestDBWriter_FlushPostsILPOverHTTP(t *testing.T) {
 
 	qw := testWriter(t, srv.URL, nil)
 	props := map[string]interface{}{"hardware_version": float64(2), "l1_voltage": 123.4}
-	qw.WriteNodeUpdate("core", props, time.Unix(0, 0), true)
+	qw.WriteNodeUpdate("core", props, time.Unix(0, 0), true, "")
 
 	if err := qw.Flush(); err != nil {
 		t.Fatalf("Flush returned error: %v", err)
@@ -100,7 +100,7 @@ func TestQuestDBWriter_FlushEmptyAndResets(t *testing.T) {
 		t.Fatalf("empty Flush error: %v", err)
 	}
 	// One write, two flushes → exactly one request (buffer reset after first).
-	qw.WriteNodeUpdate("core", map[string]interface{}{"l1_voltage": 1.0}, time.Unix(0, 0), true)
+	qw.WriteNodeUpdate("core", map[string]interface{}{"l1_voltage": 1.0}, time.Unix(0, 0), true, "")
 	_ = qw.Flush()
 	_ = qw.Flush()
 
@@ -125,7 +125,7 @@ func TestQuestDBWriter_DataErrorIsLoggedNotFatal(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	qw := testWriter(t, srv.URL, logger)
 
-	qw.WriteNodeUpdate("core", map[string]interface{}{"l1_voltage": 1.0}, time.Unix(0, 0), true)
+	qw.WriteNodeUpdate("core", map[string]interface{}{"l1_voltage": 1.0}, time.Unix(0, 0), true, "")
 	if err := qw.Flush(); err != nil {
 		t.Fatalf("data error should not be returned as a fatal flush error, got: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestQuestDBWriter_RetainsAndReplaysOnTransportFailure(t *testing.T) {
 	}
 
 	// First flush hits the "down" server → transport failure → payload retained.
-	qw.WriteNodeUpdate("core", map[string]interface{}{"l1_voltage": 1.0}, time.Unix(0, 0), true)
+	qw.WriteNodeUpdate("core", map[string]interface{}{"l1_voltage": 1.0}, time.Unix(0, 0), true, "")
 	if err := qw.Flush(); err == nil {
 		t.Fatal("expected a transport-failure error on the first flush")
 	}
@@ -218,7 +218,7 @@ func TestQuestDBWriter_ClosePersistsSpoolOnOutage(t *testing.T) {
 		t.Fatalf("NewQuestDBWriter: %v", err)
 	}
 
-	w.WriteNodeUpdate("core", map[string]interface{}{"l1_voltage": 1.0}, time.Unix(0, 0), true)
+	w.WriteNodeUpdate("core", map[string]interface{}{"l1_voltage": 1.0}, time.Unix(0, 0), true, "")
 	_ = w.Close() // flush fails (unreachable); the batch must be persisted, not lost
 
 	data, err := os.ReadFile(filepath.Join(dir, "retry.ilp"))
@@ -245,7 +245,7 @@ func TestQuestDBWriter_CloseWithoutSpoolDirLogsLoss(t *testing.T) {
 		t.Fatalf("NewQuestDBWriter: %v", err)
 	}
 
-	w.WriteNodeUpdate("core", map[string]interface{}{"l1_voltage": 1.0}, time.Unix(0, 0), true)
+	w.WriteNodeUpdate("core", map[string]interface{}{"l1_voltage": 1.0}, time.Unix(0, 0), true, "")
 	_ = w.Close() // must not panic
 
 	if !w.spool.pending() {

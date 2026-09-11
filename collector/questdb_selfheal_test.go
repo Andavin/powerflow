@@ -88,32 +88,85 @@ func TestWriterDropsQuarantinedColumn(t *testing.T) {
 	}
 }
 
-func TestIsCircuitUUID(t *testing.T) {
-	valid := []string{
-		"2e94d24ec65d46b2bafcb86afc4140c4",
-		"8ba999535cef45308f6e32b6a2977c20",
-		"0000000000000000ffffffffffffffff",
-	}
-	for _, id := range valid {
-		if !isCircuitUUID(id) {
-			t.Errorf("isCircuitUUID(%q) = false, want true", id)
-		}
+// A child device's declared type must decide its table. The regression this
+// guards: the whole-house lugs meters are not circuits, and routing them as
+// such puts the sum of the entire house into the per-circuit breakdown.
+func TestWriteNodeUpdateRoutesByDeviceType(t *testing.T) {
+	tests := []struct {
+		name      string
+		nodeID    string
+		devType   string
+		described bool
+		props     map[string]interface{}
+		wantTable string
+		wantIn    []string
+		wantNotIn []string
+	}{
+		{
+			name: "circuit device goes to circuits", nodeID: "2e94d24ec65d46b2bafcb86afc4140c4",
+			devType: "circuit", props: map[string]interface{}{"active-power": -450.2},
+			wantTable: "circuits", wantIn: []string{"circuit_id=2e94d24ec65d46b2bafcb86afc4140c4"},
+		},
+		{
+			name: "lugs device goes to panel_lugs with direction as a tag", nodeID: "nj-2338-00fq1-lugs-dn",
+			devType: "lugs", props: map[string]interface{}{"direction": "DOWNSTREAM", "active-power": 41.7},
+			wantTable: "panel_lugs", wantIn: []string{"direction=downstream", "active_power=41.7"},
+			// Emitted as both tag and field, the line is rejected outright.
+			wantNotIn: []string{"direction=\"DOWNSTREAM\""},
+		},
+		{
+			name: "lugs device without direction still writes", nodeID: "nj-2338-00fq1-lugs-up",
+			devType: "lugs", props: map[string]interface{}{"active-power": 12.0},
+			wantTable: "panel_lugs", wantIn: []string{"direction=unknown"},
+		},
+		{
+			name: "bess device goes to panel_bess", nodeID: "nj-2338-00fq1-tg125115001wah",
+			devType: "bess", props: map[string]interface{}{"soc": 55.0},
+			wantTable: "panel_bess",
+		},
+		{
+			name: "mid device goes to panel_bess", nodeID: "nj-2338-00fq1-tg125115001wah-mid",
+			devType: "mid", props: map[string]interface{}{"grid-state": "ON_GRID"},
+			wantTable: "panel_bess",
+		},
+		{
+			name:    "undescribed child falls back to unknown_topics rather than guessing",
+			nodeID:  "2e94d24ec65d46b2bafcb86afc4140c4",
+			devType: "", props: map[string]interface{}{"active-power": -450.2},
+			wantTable: "unknown_topics",
+		},
+		{
+			name:    "panel node with no explicit table goes to panel_core, not circuits",
+			nodeID:  "status",
+			devType: "", described: true, props: map[string]interface{}{"wifi": true},
+			wantTable: "panel_core", wantNotIn: []string{"circuits"},
+		},
+		{
+			name: "panel node with an explicit table still uses it", nodeID: "power-flows",
+			devType: "", described: true, props: map[string]interface{}{"site": 2100.5},
+			wantTable: "power_flows",
+		},
 	}
 
-	invalid := []string{
-		"core",
-		"power-flows",
-		"lugs-upstream",
-		"bess",
-		"2E94D24EC65D46B2BAFCB86AFC4140C4", // uppercase not accepted
-		"2e94d24ec65d46b2bafcb86afc4140c",  // 31 chars
-		"2e94d24ec65d46b2bafcb86afc4140c4a", // 33 chars
-		"meter",
-		"nj-2338-00fq1",
-	}
-	for _, id := range invalid {
-		if isCircuitUUID(id) {
-			t.Errorf("isCircuitUUID(%q) = true, want false", id)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			qw := testWriter(t, "http://127.0.0.1:9000", nil)
+			qw.WriteNodeUpdate(tt.nodeID, tt.props, time.Unix(0, 0), tt.described, tt.devType)
+			line := qw.buf.String()
+
+			if !strings.HasPrefix(line, tt.wantTable+",") && !strings.HasPrefix(line, tt.wantTable+" ") {
+				t.Fatalf("routed to the wrong table\n got: %q\nwant prefix: %q", line, tt.wantTable)
+			}
+			for _, want := range tt.wantIn {
+				if !strings.Contains(line, want) {
+					t.Errorf("missing %q in %q", want, line)
+				}
+			}
+			for _, bad := range tt.wantNotIn {
+				if strings.Contains(line, bad) {
+					t.Errorf("unexpected %q in %q", bad, line)
+				}
+			}
+		})
 	}
 }
