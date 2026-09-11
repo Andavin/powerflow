@@ -87,13 +87,16 @@ export function latestDeviceSql(): string {
  * check would miss a per-table failure like the circuits outage. `panel_bess`
  * is deliberately excluded: it updates only every few minutes and would
  * false-trip a one-minute staleness check.
+ *
+ * `panel_core` and `panel_lugs` were removed: firmware r202633+ no longer
+ * publishes the `core`/`lugs-*` panel nodes — those tables will never receive
+ * new data and would pin the stale banner forever. `power_flows` covers
+ * panel-level ingestion health instead.
  */
 export const FRESHNESS_TABLES = [
   "power_usage",
   "circuits",
   "power_flows",
-  "panel_core",
-  "panel_lugs",
 ] as const;
 
 /** One of the fixed sentinel table names. */
