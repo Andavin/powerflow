@@ -28,7 +28,14 @@ func TestBrokerURL(t *testing.T) {
 func TestSubscribeTopics(t *testing.T) {
 	cfg := SpanConfig{TopicPrefix: "ebus/5", DeviceID: "dev-123"}
 	got := cfg.SubscribeTopics()
-	want := []string{"ebus/5/dev-123/+", "ebus/5/dev-123/+/+"}
+	// Four filters: two for the panel device, two for child circuit devices
+	// (firmware r202633+ publishes each breaker as its own Homie 5 device).
+	want := []string{
+		"ebus/5/dev-123/+",  // panel: $state, $description
+		"ebus/5/dev-123/+/+", // panel: <node>/<property>
+		"ebus/5/+/+",        // circuit devices: $state, $description
+		"ebus/5/+/+/+",      // circuit devices: <node>/<property>
+	}
 	if len(got) != len(want) {
 		t.Fatalf("SubscribeTopics() = %v, want %v", got, want)
 	}
@@ -37,7 +44,7 @@ func TestSubscribeTopics(t *testing.T) {
 			t.Errorf("SubscribeTopics()[%d] = %q, want %q", i, got[i], want[i])
 		}
 	}
-	// Neither filter may use the multi-level '#' wildcard (that would let
+	// No filter may use the multi-level '#' wildcard (that would let
 	// 3-level command sub-topics like <node>/<property>/set through again).
 	for _, f := range got {
 		if strings.ContainsRune(f, '#') {

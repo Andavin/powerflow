@@ -320,6 +320,22 @@ func (q *QuestDBWriter) execHTTP(query string) error {
 	return nil
 }
 
+// isCircuitUUID reports whether nodeID is a SPAN circuit UUID — 32 lowercase
+// hex characters as assigned by the panel firmware. Used to route circuit
+// device nodes (firmware r202633+) to the circuits table even though they are
+// not described in the panel's own $description.
+func isCircuitUUID(nodeID string) bool {
+	if len(nodeID) != 32 {
+		return false
+	}
+	for _, c := range nodeID {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
 // WriteNodeUpdate writes a single node's data to the ILP buffer,
 // routing it to the correct table based on nodeID and isDescribed.
 func (q *QuestDBWriter) WriteNodeUpdate(nodeID string, props map[string]interface{}, ts time.Time, isDescribed bool) {
@@ -332,7 +348,7 @@ func (q *QuestDBWriter) WriteNodeUpdate(nodeID string, props map[string]interfac
 			extras["direction"] = "downstream"
 		}
 		q.writeRow(table, extras, props, ts)
-	} else if isDescribed {
+	} else if isDescribed || isCircuitUUID(nodeID) {
 		extras := map[string]string{"circuit_id": nodeID}
 		q.writeRow("circuits", extras, props, ts)
 	} else {

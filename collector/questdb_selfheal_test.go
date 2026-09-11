@@ -87,3 +87,33 @@ func TestWriterDropsQuarantinedColumn(t *testing.T) {
 		t.Errorf("valid column dropped: %q", line)
 	}
 }
+
+func TestIsCircuitUUID(t *testing.T) {
+	valid := []string{
+		"2e94d24ec65d46b2bafcb86afc4140c4",
+		"8ba999535cef45308f6e32b6a2977c20",
+		"0000000000000000ffffffffffffffff",
+	}
+	for _, id := range valid {
+		if !isCircuitUUID(id) {
+			t.Errorf("isCircuitUUID(%q) = false, want true", id)
+		}
+	}
+
+	invalid := []string{
+		"core",
+		"power-flows",
+		"lugs-upstream",
+		"bess",
+		"2E94D24EC65D46B2BAFCB86AFC4140C4", // uppercase not accepted
+		"2e94d24ec65d46b2bafcb86afc4140c",  // 31 chars
+		"2e94d24ec65d46b2bafcb86afc4140c4a", // 33 chars
+		"meter",
+		"nj-2338-00fq1",
+	}
+	for _, id := range invalid {
+		if isCircuitUUID(id) {
+			t.Errorf("isCircuitUUID(%q) = true, want false", id)
+		}
+	}
+}

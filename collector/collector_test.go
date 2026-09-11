@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log/slog"
 	"testing"
 )
 
@@ -144,3 +145,116 @@ func TestParseTopicDifferentBases(t *testing.T) {
 		})
 	}
 }
+
+func TestFlatCircuitProp(t *testing.T) {
+	tests := []struct {
+		node, property, want string
+	}{
+		// meter node — primary energy/power data, use property name directly
+		{"meter", "active-power", "active-power"},
+		{"meter", "imported-energy", "imported-energy"},
+		{"meter", "exported-energy", "exported-energy"},
+		{"meter", "current", "current"},
+		// info node — circuit metadata
+		{"info", "name", "name"},
+		{"info", "spaces", "spaces"},
+		// switch node — relay control
+		{"switch", "relay", "relay"},
+		{"switch", "relay-requester", "relay-requester"},
+		{"switch", "relay-controllable", "relay-controllable"},
+		// breaker node — prefix with "breaker-" for EnergyTracker ceiling lookup
+		{"breaker", "rating", "breaker-rating"},
+		{"breaker", "poles", "breaker-poles"},
+		// load-shed node — map "priority" to "shed-priority" for backward compat
+		{"load-shed", "priority", "shed-priority"},
+		{"load-shed", "other", "shed-other"},
+		// pcs node — prefix with "pcs-"
+		{"pcs", "managed", "pcs-managed"},
+		{"pcs", "priority", "pcs-priority"},
+		// connection node
+		{"connection", "feeds-device-id", "connection-feeds-device-id"},
+		// unknown node — generic prefix
+		{"unknown", "foo", "unknown-foo"},
+	}
+
+	for _, tt := range tests {
+		got := flatCircuitProp(tt.node, tt.property)
+		if got != tt.want {
+			t.Errorf("flatCircuitProp(%q, %q) = %q, want %q", tt.node, tt.property, got, tt.want)
+		}
+	}
+}
+
+func TestHandleChildDeviceTopic(t *testing.T) {
+	logger := slog.Default()
+	state := NewState("nj-2338-00fq1", logger, 0)
+
+	// The panel's own $description must arrive first — state buffers all updates
+	// until then. Circuit device UUIDs are not in the panel description, so they
+	// are treated as unknown nodes and become immediately ready.
+	descJSON := `{"homie":"5.0","version":1,"name":"SPAN Panel","type":"panel","nodes":{}}`
+	if _, err := state.SetDescription([]byte(descJSON)); err != nil {
+		t.Fatalf("SetDescription: %v", err)
+	}
+
+	var gotNodeID, gotProp string
+	var gotValue interface{}
+
+	c := &Collector{
+		state:       state,
+		topicBase:   "ebus/5/nj-2338-00fq1/",
+		topicParent: "ebus/5/",
+		deviceID:    "nj-2338-00fq1",
+		logger:      logger,
+		onUpdate: func(ur UpdateResult) {
+			gotNodeID = ur.NodeID
+			if vals := state.NodeValues(ur.NodeID); vals != nil {
+				gotProp = "active-power"
+				gotValue = vals["active-power"]
+			}
+		},
+	}
+
+	// Circuit device property: ebus/5/<uuid>/meter/active-power
+	uuid := "2e94d24ec65d46b2bafcb86afc4140c4"
+	c.handleChildDeviceTopic("ebus/5/"+uuid+"/meter/active-power", []byte("-123.4"))
+
+	if gotNodeID != uuid {
+		t.Errorf("nodeID = %q, want %q", gotNodeID, uuid)
+	}
+	if gotProp != "active-power" {
+		t.Errorf("prop = %q, want %q", gotProp, "active-power")
+	}
+	if v, ok := gotValue.(float64); !ok || v != -123.4 {
+		t.Errorf("value = %v, want -123.4", gotValue)
+	}
+}
+
+func TestHandleChildDeviceTopicIgnored(t *testing.T) {
+	logger := slog.Default()
+	state := NewState("nj-2338-00fq1", logger, 0)
+	called := false
+	c := &Collector{
+		state:       state,
+		topicBase:   "ebus/5/nj-2338-00fq1/",
+		topicParent: "ebus/5/",
+		deviceID:    "nj-2338-00fq1",
+		logger:      logger,
+		onUpdate:    func(ur UpdateResult) { called = true },
+	}
+
+	uuid := "2e94d24ec65d46b2bafcb86afc4140c4"
+	// $description should be silently ignored
+	c.handleChildDeviceTopic("ebus/5/"+uuid+"/$description", []byte("{}"))
+	// $state should be silently ignored
+	c.handleChildDeviceTopic("ebus/5/"+uuid+"/$state", []byte("ready"))
+	// command sub-topic should be ignored
+	c.handleChildDeviceTopic("ebus/5/"+uuid+"/switch/relay/set", []byte("OPEN"))
+	// panel device's own topics should be ignored
+	c.handleChildDeviceTopic("ebus/5/nj-2338-00fq1/meter/voltage-a", []byte("122.0"))
+
+	if called {
+		t.Error("onUpdate should not have been called for ignored topics")
+	}
+}
+

@@ -75,19 +75,31 @@ type SpanConfig struct {
 }
 
 // SubscribeTopics returns the MQTT topic filters the collector subscribes to.
-// Two single-level (`+`) filters instead of one multi-level (`#`) wildcard:
 //
+// Panel device (existing):
 //   - "<prefix>/<device>/+"    device-level attributes ($state, $description)
 //   - "<prefix>/<device>/+/+"  node property values (<node>/<property>)
 //
-// A property value in Homie 5 is always exactly <node>/<property> (2 levels),
-// so this structurally excludes 3-level command/attribute sub-topics such as
-// "<node>/<property>/set" — the poison topics never reach the collector. This
-// is a transport-layer second layer; parseTopic's guard and the ILP
-// column-name validation remain the authoritative defense.
+// Child circuit devices (firmware r202633+): SPAN promoted each breaker from a
+// node within the panel device to its own top-level Homie 5 device, published
+// under "<prefix>/<circuit-uuid>/". The two wildcard filters below capture
+// their $description/$state and node/property values respectively.
+//
+//   - "<prefix>/+/+"    child device-level attributes
+//   - "<prefix>/+/+/+"  child device node property values
+//
+// MQTT delivers each message once per client even when multiple filters match
+// (e.g. the panel's own $description matches both the first and third filter),
+// so there is no double-processing.
 func (s *SpanConfig) SubscribeTopics() []string {
 	base := s.TopicPrefix + "/" + s.DeviceID
-	return []string{base + "/+", base + "/+/+"}
+	parent := s.TopicPrefix
+	return []string{
+		base + "/+",       // panel: $state, $description
+		base + "/+/+",     // panel: <node>/<property>
+		parent + "/+/+",   // circuit devices: $state, $description
+		parent + "/+/+/+", // circuit devices: <node>/<property>
+	}
 }
 
 func (s *SpanConfig) TopicBase() string {
