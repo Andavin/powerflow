@@ -77,6 +77,8 @@ DEFAULT_MAX_TOTAL_BYTES = 4 * 1024 * 1024 * 1024
 DEFAULT_HEARTBEAT_SECS = 60
 DEFAULT_FSYNC_SECS = 1.0
 DEFAULT_PRUNE_SECS = 300
+# How often the status file is refreshed (see Logger._ticker).
+DEFAULT_STATUS_SECS = 10
 DEFAULT_STALE_SECS = 300
 
 
@@ -555,6 +557,7 @@ class Logger:
         self.refused: set[str] = set()
         self._pending_sub: dict[int, str] = {}
         self._status_path = status_path(cfg["log_dir"])
+        self._last_window: dict = {}
         self.client = self._build_client()
 
     # -- lifecycle ----------------------------------------------------------
@@ -699,11 +702,18 @@ class Logger:
                 "the collector is probably not ingesting",
                 window["messages"], self.cfg["expect_prefix"], elapsed,
             )
+        self._last_window = window
         self._publish_status(window)
 
     def _ticker(self) -> None:
         tick = min(self.cfg["fsync_secs"], 1.0)
+        # Refresh the status file more often than the heartbeat is logged, so
+        # the healthcheck (and anyone reading it during an incident) sees the
+        # real age of the last message rather than the age of the last
+        # heartbeat. Cheap: one small atomic write every STATUS_SECS.
+        status_secs = min(self.cfg["heartbeat_secs"], DEFAULT_STATUS_SECS)
         last_hb = time.monotonic()
+        last_status = time.monotonic()
         last_prune = time.monotonic()
         while not self.stop.wait(tick):
             now = time.monotonic()
@@ -717,6 +727,10 @@ class Logger:
             if now - last_hb >= self.cfg["heartbeat_secs"]:
                 self._heartbeat(now - last_hb)
                 last_hb = now
+                last_status = now
+            elif now - last_status >= status_secs:
+                self._publish_status(self._last_window)
+                last_status = now
             # Retention must not depend on messages arriving: prune on a timer
             # as well as on rotation.
             if now - last_prune >= self.cfg["prune_secs"]:

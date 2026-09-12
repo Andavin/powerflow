@@ -528,3 +528,10 @@ def test_write_returns_the_byte_count(tmp_path):
     n = log.write("2026-09-11T05:00:00.000000Z", "t", "a")
     log.close()
     assert n == os.path.getsize(tmp_path / "2026-09-11T05.ndjson")
+
+
+def test_status_file_is_refreshed_more_often_than_the_heartbeat():
+    """A healthcheck read between heartbeats must see the real message age."""
+    assert mqttlog.DEFAULT_STATUS_SECS < mqttlog.DEFAULT_HEARTBEAT_SECS
+    # ...and comfortably inside the staleness threshold it feeds.
+    assert mqttlog.DEFAULT_STATUS_SECS < mqttlog.DEFAULT_STALE_SECS
