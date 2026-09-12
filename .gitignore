@@ -64,3 +64,8 @@ package-lock.json
 # crash core dumps
 core
 core.[0-9]*
+
+# python (mqttlog)
+__pycache__/
+.pytest_cache/
+.ruff_cache/
