@@ -87,13 +87,18 @@ var columnTypes = map[string]map[string]qType{
 		"imported_energy": qDouble,
 		"exported_energy": qDouble,
 		"space":           qLong,
-		"breaker_rating":  qLong,
-		"pcs_priority":    qLong,
-		"sheddable":       qBoolean,
-		"pcs_managed":     qBoolean,
-		"never_backup":    qBoolean,
-		"always_on":       qBoolean,
-		"dipole":          qBoolean,
+		// Firmware r202633+ replaced the single "space" integer with "spaces",
+		// which the panel declares as a string because a double-pole breaker
+		// occupies two: "7" but also "30,32". Inferring from a single-pole
+		// sample pins it LONG and then rejects every double-pole circuit.
+		"spaces":         qString,
+		"breaker_rating": qLong,
+		"pcs_priority":   qLong,
+		"sheddable":      qBoolean,
+		"pcs_managed":    qBoolean,
+		"never_backup":   qBoolean,
+		"always_on":      qBoolean,
+		"dipole":         qBoolean,
 	},
 	"power_flows": {
 		// The four instantaneous power channels (watts). Pinning them makes the
@@ -104,6 +109,36 @@ var columnTypes = map[string]map[string]qType{
 		"pv":      qDouble,
 		"grid":    qDouble,
 		"battery": qDouble,
+	},
+	// The BESS (a Tesla Powerwall) and the MID both land here — see
+	// WriteNodeUpdate. Neither table was pinned before, which is how
+	// active_power came to be inferred as LONG from a first sample that
+	// happened to read "0": every fractional watt reading after it was
+	// rejected and quarantined, silently dropping 3,303 readings while the
+	// rows themselves wrote fine.
+	"panel_bess": {
+		"active_power":       qDouble,
+		"soc":                qDouble,
+		"soe":                qDouble,
+		"nameplate_capacity": qDouble,
+		// Enum/identifier text. grid_state and islanding_state come from the
+		// MID device; the rest describe the battery itself.
+		"grid_state":          qString,
+		"islanding_state":     qString,
+		"grid_forming_entity": qString,
+		"communication_state": qString,
+		"vendor_name":         qString,
+		"model":               qString,
+		"serial_number":       qString,
+		"part_number":         qString,
+	},
+	"panel_lugs": {
+		"active_power":    qDouble,
+		"current_a":       qDouble,
+		"current_b":       qDouble,
+		"imported_energy": qDouble,
+		"exported_energy": qDouble,
+		"count":           qLong,
 	},
 }
 

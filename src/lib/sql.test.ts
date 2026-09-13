@@ -52,6 +52,14 @@ describe("latest queries", () => {
     expect(sql).toContain("grid_state");
     expect(sql).toContain("connected");
   });
+
+  it("latestBatterySql also reads the r202633+ battery columns", () => {
+    // communication_state replaces `connected`, islanding_state replaces
+    // grid_state. Both legacy columns stay selected for older firmware.
+    const sql = latestBatterySql("dev1");
+    expect(sql).toContain("communication_state");
+    expect(sql).toContain("islanding_state");
+  });
 });
 
 describe("circuitsLatestSql", () => {

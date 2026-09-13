@@ -10,8 +10,35 @@ import {
   circuitSeriesFromRows,
   homeSourceMix,
   num,
+  batteryConnected,
 } from "./transform";
 import type { TimeWindow } from "./time";
+
+describe("batteryConnected", () => {
+  // The regression this exists for: firmware r202633+ stopped publishing the
+  // `connected` flag, and a QuestDB BOOLEAN cannot be NULL — so every row reads
+  // connected=false and a perfectly healthy Powerwall rendered as disconnected.
+  it("trusts communication-state over an unwritten `connected` column", () => {
+    expect(batteryConnected({ communication_state: "OK", connected: false })).toBe(true);
+  });
+
+  it("reports a genuine comms failure as disconnected", () => {
+    expect(batteryConnected({ communication_state: "ERROR", connected: false })).toBe(false);
+  });
+
+  it("falls back to `connected` on firmware with no comms state", () => {
+    expect(batteryConnected({ connected: true })).toBe(true);
+    expect(batteryConnected({ connected: false })).toBe(false);
+  });
+
+  it("is unknown, not false, when neither column is present", () => {
+    expect(batteryConnected({})).toBeNull();
+  });
+
+  it("treats an empty comms state as absent rather than as a failure", () => {
+    expect(batteryConnected({ communication_state: "", connected: true })).toBe(true);
+  });
+});
 
 describe("num", () => {
   it("parses numbers and strings, rejects junk", () => {
@@ -35,6 +62,23 @@ describe("toFlowSnapshot", () => {
     expect(snap.batteryW).toBe(3075); // discharging
     expect(snap.batterySoc).toBe(56);
     expect(snap.gridState).toBe("ON_GRID");
+  });
+
+  it("reads grid state from the MID's islanding-state on r202633+", () => {
+    // The battery device no longer publishes grid_state; the MID publishes
+    // islanding-state instead, and `connected` is a stale false.
+    const snap = toFlowSnapshot(
+      { site: 0, grid: 0, pv: 0, battery: 0 },
+      {
+        soc: 100,
+        soe: 13.5,
+        communication_state: "OK",
+        islanding_state: "ON_GRID",
+        connected: false,
+      },
+    );
+    expect(snap.gridState).toBe("ON_GRID");
+    expect(snap.batteryConnected).toBe(true);
   });
 
   it("derives battery % from state-of-energy the SPAN way (soe / usable)", () => {
