@@ -80,6 +80,9 @@ services:
     volumes:
       # Same shared config.yml + ca.pem the collector uses.
       - ./config:/config:ro
+      # Push-notification subscriptions (a small JSON file). A named volume by
+      # default; set POWERFLOW_DATA to an absolute host path to keep it elsewhere.
+      - "${POWERFLOW_DATA:-powerflow-data}:/data"
     env_file:
       - path: .env
         required: false
@@ -105,6 +108,7 @@ services:
 
 volumes:
   questdb-data:
+  powerflow-data:
 
 networks:
   span:

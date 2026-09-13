@@ -117,3 +117,58 @@ describe("readConfig — file (config.yml) as the base layer", () => {
     expect(c.dataMode).toBe("mock");
   });
 });
+
+describe("readConfig — notify (push notifications)", () => {
+  it("is off by default: no VAPID keys, sane thresholds", () => {
+    const c = readConfig(empty, null);
+    expect(c.notify.vapidPublicKey).toBe("");
+    expect(c.notify.vapidPrivateKey).toBe("");
+    expect(c.notify.vapidSubject).toBe("mailto:admin@example.com");
+    expect(c.notify.dataDir).toBe("/data");
+    expect(c.notify.batteryLowPercent).toBe(20);
+    expect(c.notify.staleAfterMs).toBe(5 * 60_000);
+  });
+
+  it("reads the notify block from the file", () => {
+    const c = readConfig(empty, {
+      powerflow: {
+        notify: {
+          vapid_public_key: "pub",
+          vapid_private_key: "priv",
+          vapid_subject: "mailto:me@example.org",
+          data_dir: "/var/powerflow",
+          battery_low_percent: 0,
+          stale_after: "90s",
+        },
+      },
+    });
+    expect(c.notify.vapidPublicKey).toBe("pub");
+    expect(c.notify.vapidPrivateKey).toBe("priv");
+    expect(c.notify.vapidSubject).toBe("mailto:me@example.org");
+    expect(c.notify.dataDir).toBe("/var/powerflow");
+    expect(c.notify.batteryLowPercent).toBe(0); // 0 is a real value (disabled), not "unset"
+    expect(c.notify.staleAfterMs).toBe(90_000);
+  });
+
+  it("lets environment variables override the file", () => {
+    const c = readConfig(
+      env({
+        POWERFLOW_VAPID_PUBLIC_KEY: "env-pub",
+        POWERFLOW_VAPID_PRIVATE_KEY: "env-priv",
+        POWERFLOW_DATA_DIR: "/tmp/pf",
+        POWERFLOW_BATTERY_LOW_PERCENT: "35",
+        POWERFLOW_STALE_AFTER: "2m",
+      }),
+      { powerflow: { notify: { vapid_public_key: "pub", battery_low_percent: 10, stale_after: "5m" } } },
+    );
+    expect(c.notify.vapidPublicKey).toBe("env-pub");
+    expect(c.notify.vapidPrivateKey).toBe("env-priv");
+    expect(c.notify.dataDir).toBe("/tmp/pf");
+    expect(c.notify.batteryLowPercent).toBe(35);
+    expect(c.notify.staleAfterMs).toBe(120_000);
+  });
+
+  it("rejects a stale_after it can't parse rather than silently defaulting", () => {
+    expect(() => readConfig(env({ POWERFLOW_STALE_AFTER: "soon" }), null)).toThrow(/stale_after/);
+  });
+});

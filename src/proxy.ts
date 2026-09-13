@@ -29,7 +29,9 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
   return NextResponse.redirect(url);
 }
 
-// Run on everything except Next internals and static assets.
+// Run on everything except Next internals and static assets. The install
+// assets (manifest, icons) and the service worker script are fetched by the
+// OS / browser outside the page's session, so they must stay reachable.
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.svg|apple-icon|manifest.webmanifest).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.svg|icon-|apple-icon|manifest.webmanifest|sw.js).*)"],
 };

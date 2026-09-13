@@ -2,7 +2,7 @@
 
 import useSWR from "swr";
 import { fetcher } from "@/lib/client/data";
-import type { FreshnessResult } from "@/app/api/freshness/route";
+import type { FreshnessResult } from "@/lib/freshness";
 
 function formatAge(seconds: number | null | undefined): string {
   if (seconds == null) return "a while";
