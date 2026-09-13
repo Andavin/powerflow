@@ -1,0 +1,60 @@
+name: mqttlog CI
+
+# Lint and test the rolling MQTT raw-data logger. Scoped to mqttlog/** so it
+# only runs when the logger changes (the web app and the Go collector have
+# their own workflows). Actions are pinned to commit SHAs — matching this
+# repo's other workflows — and kept current by Dependabot.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "mqttlog/**"
+      - ".github/workflows/mqttlog-ci.yml"
+  pull_request:
+    paths:
+      - "mqttlog/**"
+      - ".github/workflows/mqttlog-ci.yml"
+
+defaults:
+  run:
+    working-directory: mqttlog
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          # Match the runtime image (mqttlog/Dockerfile).
+          python-version: "3.13"
+          cache: pip
+          # Relative to the repo root, not the working-directory above.
+          cache-dependency-path: mqttlog/requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Test
+        run: pytest -q
+
+      # The logger is only useful if it can actually be built and started, and
+      # --healthcheck exercises the container's health path without a broker.
+      - name: Build image
+        run: docker build -t mqttlog:ci .
+
+      - name: Smoke test the image
+        run: |
+          docker run --rm mqttlog:ci --version
+          # No status file yet, so the healthcheck must report unhealthy.
+          if docker run --rm mqttlog:ci --healthcheck; then
+            echo "healthcheck should fail before the logger has written anything" >&2
+            exit 1
+          fi

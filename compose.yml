@@ -103,8 +103,59 @@ services:
     networks:
       - span
 
+  # Rolling raw-MQTT logger: keeps ~1 day of the panel's raw message stream on
+  # disk so an ingestion outage can be replayed instead of lost forever. It has
+  # no dependency on QuestDB or the collector by design — it must keep logging
+  # precisely when the rest of the stack is broken.
+  #
+  # Recovering a missed window (dry run first — it is the default):
+  #   docker compose exec powerflow-mqttlog python /app/replay.py \
+  #     --from 2026-09-11T05:00:00Z --to 2026-09-11T09:00:00Z
+  #   ...then add --publish --host <broker> to actually send it. Replaying into
+  #   the panel's own broker is refused unless --i-really-mean-the-panel.
+  powerflow-mqttlog:
+    image: ghcr.io/andavin/powerflow-mqttlog:${MQTTLOG_TAG:-latest}
+    restart: unless-stopped
+    volumes:
+      # Same shared config.yml + ca.pem the collector uses.
+      - ./config:/config:ro
+      # A named volume, so the log lands on the docker root rather than on
+      # whatever slow filesystem a bind mount might point at.
+      - pf-mqttlog:/log
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # ~25 hours at ~25 MB/hour, so roughly 640 MB on disk. Must be >= 1;
+      # there is no "0 disables pruning" setting.
+      KEEP_HOURS: "25"
+    extra_hosts:
+      - "${PANEL_HOST:?set PANEL_HOST in .env}:${PANEL_IP:?set PANEL_IP in .env}"
+    # Red when no data has been written recently, not merely when the process
+    # has died: a container that is Up but recording nothing is exactly the
+    # failure this service exists to catch.
+    healthcheck:
+      test: ["CMD", "python", "/app/mqttlog.py", "--healthcheck"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    tmpfs: ["/tmp"]
+    mem_limit: 128m
+    networks:
+      - span
+
 volumes:
   questdb-data:
+  pf-mqttlog:
 
 networks:
   span:
