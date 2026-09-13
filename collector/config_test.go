@@ -31,10 +31,10 @@ func TestSubscribeTopics(t *testing.T) {
 	// Four filters: two for the panel device, two for child circuit devices
 	// (firmware r202633+ publishes each breaker as its own Homie 5 device).
 	want := []string{
-		"ebus/5/dev-123/+",  // panel: $state, $description
+		"ebus/5/dev-123/+",   // panel: $state, $description
 		"ebus/5/dev-123/+/+", // panel: <node>/<property>
-		"ebus/5/+/+",        // circuit devices: $state, $description
-		"ebus/5/+/+/+",      // circuit devices: <node>/<property>
+		"ebus/5/+/+",         // circuit devices: $state, $description
+		"ebus/5/+/+/+",       // circuit devices: <node>/<property>
 	}
 	if len(got) != len(want) {
 		t.Fatalf("SubscribeTopics() = %v, want %v", got, want)

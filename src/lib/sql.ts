@@ -88,15 +88,17 @@ export function latestDeviceSql(): string {
  * is deliberately excluded: it updates only every few minutes and would
  * false-trip a one-minute staleness check.
  *
- * `panel_core` and `panel_lugs` were removed: firmware r202633+ no longer
- * publishes the `core`/`lugs-*` panel nodes — those tables will never receive
- * new data and would pin the stale banner forever. `power_flows` covers
- * panel-level ingestion health instead.
+ * `panel_core` and `panel_lugs` stay in this list. Firmware r202633+ moved the
+ * panel scalars and the lugs meters onto their own Homie devices rather than
+ * dropping them, so a stale reading here means the collector has stopped
+ * routing those devices — exactly the failure this check exists to catch.
  */
 export const FRESHNESS_TABLES = [
   "power_usage",
   "circuits",
   "power_flows",
+  "panel_core",
+  "panel_lugs",
 ] as const;
 
 /** One of the fixed sentinel table names. */

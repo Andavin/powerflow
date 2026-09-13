@@ -262,7 +262,7 @@ func flushBatch(batch []pendingWrite, qdb *QuestDBWriter, energy *EnergyTracker,
 				props = filterToAllowed(pw.nodeID, props, declared, pins, logger)
 			}
 		}
-		qdb.WriteNodeUpdate(pw.nodeID, props, pw.ts, described)
+		qdb.WriteNodeUpdate(pw.nodeID, props, pw.ts, described, state.ChildType(pw.nodeID))
 	}
 
 	deltas := energy.Process(state)
