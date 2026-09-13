@@ -31,6 +31,20 @@ export interface MqttConfig {
   clientId: string;
 }
 
+/** Push-notification settings (web-only). Push is configured iff both VAPID keys are set. */
+export interface NotifyConfig {
+  vapidPublicKey: string;
+  vapidPrivateKey: string;
+  /** Sender contact handed to the push service (Apple/Google/Mozilla). */
+  vapidSubject: string;
+  /** Directory holding push-subscriptions.json. */
+  dataDir: string;
+  /** Battery SOC (%) below which "battery low" fires; 0 disables. */
+  batteryLowPercent: number;
+  /** How long data must be continuously stale before "collector down" is pushed. */
+  staleAfterMs: number;
+}
+
 export interface PowerflowConfig {
   dataMode: DataMode;
   questdbUrl: string;
@@ -45,6 +59,7 @@ export interface PowerflowConfig {
    */
   controlEnabled: boolean;
   mqtt: MqttConfig;
+  notify: NotifyConfig;
 }
 
 /**
@@ -82,6 +97,14 @@ export interface FileConfig {
       client_id?: string;
       reject_unauthorized?: boolean;
     };
+    notify?: {
+      vapid_public_key?: string;
+      vapid_private_key?: string;
+      vapid_subject?: string;
+      data_dir?: string;
+      battery_low_percent?: number;
+      stale_after?: string;
+    };
   };
 }
 
@@ -104,6 +127,31 @@ function pickBool(envVal: string | undefined, fileVal: boolean | undefined, fall
   if (e) return e === "1" || e.toLowerCase() === "true";
   if (typeof fileVal === "boolean") return fileVal;
   return fallback;
+}
+
+/** Env number (if set), else the file number, else fallback. */
+function pickNum(envVal: string | undefined, fileVal: number | undefined, fallback: number): number {
+  const e = envVal?.trim();
+  if (e) {
+    const n = Number(e);
+    if (!Number.isFinite(n)) throw new Error(`expected a number, got "${e}"`);
+    return n;
+  }
+  if (typeof fileVal === "number") return fileVal;
+  return fallback;
+}
+
+/**
+ * Parse a Go-style duration ("90s", "5m", "1h", "250ms") into milliseconds. A
+ * bare integer is taken as seconds. Anything else is a hard error: this guards
+ * a threshold, and a typo silently becoming "5 minutes" is worse than a crash.
+ */
+export function parseDurationMs(text: string, key: string): number {
+  const m = /^(\d+)(ms|s|m|h)?$/.exec(text.trim());
+  if (!m) throw new Error(`${key}: expected a duration like "5m" or "90s", got "${text}"`);
+  const n = Number(m[1]);
+  const unit = m[2] ?? "s";
+  return n * { ms: 1, s: 1000, m: 60_000, h: 3_600_000 }[unit]!;
 }
 
 /** Derive the web app's MQTT url from the collector-shared host/port fields. */
@@ -175,6 +223,14 @@ export function readConfig(
       rejectUnauthorized: pickBool(env.POWERFLOW_MQTT_REJECT_UNAUTHORIZED, pf.mqtt?.reject_unauthorized, true),
       topicPrefix: pickStr(env.POWERFLOW_MQTT_TOPIC_PREFIX, f.span?.topic_prefix, "ebus/5").replace(/\/$/, ""),
       clientId: pickStr(env.POWERFLOW_MQTT_CLIENT_ID, pf.mqtt?.client_id, "powerflow-web"),
+    },
+    notify: {
+      vapidPublicKey: pickStr(env.POWERFLOW_VAPID_PUBLIC_KEY, pf.notify?.vapid_public_key, ""),
+      vapidPrivateKey: pickStr(env.POWERFLOW_VAPID_PRIVATE_KEY, pf.notify?.vapid_private_key, ""),
+      vapidSubject: pickStr(env.POWERFLOW_VAPID_SUBJECT, pf.notify?.vapid_subject, "mailto:admin@example.com"),
+      dataDir: pickStr(env.POWERFLOW_DATA_DIR, pf.notify?.data_dir, "/data"),
+      batteryLowPercent: pickNum(env.POWERFLOW_BATTERY_LOW_PERCENT, pf.notify?.battery_low_percent, 20),
+      staleAfterMs: parseDurationMs(pickStr(env.POWERFLOW_STALE_AFTER, pf.notify?.stale_after, "5m"), "stale_after"),
     },
   };
 }
