@@ -11,6 +11,16 @@ import type { LiveSnapshot } from "./types";
  * other node is a circuit (matching the collector's routing).
  */
 
+/**
+ * Nodes of the panel device itself. Anything else under the panel is treated as
+ * a circuit, so this list must stay complete: the panel's `status` node carries
+ * a `relay` property for the *main* relay, and omitting it puts the whole-panel
+ * disconnect into the per-circuit list as a breaker named "status".
+ *
+ * The first six are the pre-r202633 layout; the rest are the nodes that
+ * firmware exposes on the panel now that circuits have moved to their own
+ * devices.
+ */
 export const SYSTEM_NODES = new Set([
   "core",
   "lugs-upstream",
@@ -19,6 +29,14 @@ export const SYSTEM_NODES = new Set([
   "pcs",
   "bess",
   "unknown",
+  // r202633+ panel nodes
+  "info",
+  "door",
+  "status",
+  "meter",
+  "breaker",
+  "shed",
+  "shed-forecast",
 ]);
 
 export interface LiveState {

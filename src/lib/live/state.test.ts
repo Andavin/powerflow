@@ -89,6 +89,34 @@ describe("applyMessage — r202633 child devices", () => {
   });
 });
 
+describe("applyMessage — panel nodes are not circuits", () => {
+  it("does not treat the panel's main relay as a breaker", () => {
+    // The panel's `status` node carries a `relay` property for the MAIN relay,
+    // which the `+/relay` subscription matches. Treating it as a circuit puts
+    // the whole-panel disconnect in the breaker list, named "status".
+    const s = emptyLiveState();
+    expect(apply(s, `ebus/5/${DEV}/status/relay`, "CLOSED")).toBe(false);
+    expect(s.circuitRelay.has("status")).toBe(false);
+    expect(buildSnapshot(s, new Map()).circuits.find((c) => c.id === "status")).toBeUndefined();
+  });
+
+  it("ignores the panel's other r202633 nodes", () => {
+    const s = emptyLiveState();
+    for (const node of ["info", "door", "meter", "breaker", "shed", "shed-forecast"]) {
+      apply(s, `ebus/5/${DEV}/${node}/active-power`, "10");
+      apply(s, `ebus/5/${DEV}/${node}/relay`, "CLOSED");
+    }
+    expect(s.circuitWatts.size).toBe(0);
+    expect(s.circuitRelay.size).toBe(0);
+  });
+
+  it("still treats a genuine panel-node circuit as one on older firmware", () => {
+    const s = emptyLiveState();
+    expect(apply(s, `ebus/5/${DEV}/circuit-7/relay`, "OPEN")).toBe(true);
+    expect(s.circuitRelay.get("circuit-7")).toBe("OPEN");
+  });
+});
+
 describe("relayCommandTopic", () => {
   it("uses the child-device switch topic for an r202633 circuit", () => {
     // Publishing the pre-OTA topic on new firmware fails silently: the broker
