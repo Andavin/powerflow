@@ -7,6 +7,7 @@ import {
   buildSnapshot,
   emptyLiveState,
   isFlowReady,
+  relayCommandTopic,
   type LiveState,
 } from "./state";
 import type { LiveSnapshot, LiveSource, MetaProvider } from "./types";
@@ -117,6 +118,19 @@ export class MqttLiveSource implements LiveSource {
           `${p}/${d}/+/relay`,
           // Device description carries per-circuit settable flags (for control).
           `${p}/${d}/$description`,
+          // Firmware r202633+ moved circuits, the BESS and the MID out of the
+          // panel device and onto their own. Their $description is what carries
+          // the device type and the relay settable flag, so without it every
+          // breaker reads as uncontrollable and battery state never arrives.
+          // Single-level wildcards only: `#` would also deliver command
+          // sub-topics such as `switch/relay/set`.
+          `${p}/+/$description`,
+          `${p}/+/meter/active-power`,
+          `${p}/+/switch/relay`,
+          `${p}/+/switch/relay-controllable`,
+          `${p}/+/soc/+`,
+          `${p}/+/status/communication-state`,
+          `${p}/+/grid/islanding-state`,
         ],
         { qos: 0 },
         (err) => err && this.log("error", "MQTT subscribe failed", err.message),
@@ -174,6 +188,13 @@ export class MqttLiveSource implements LiveSource {
    * Guardrails (control enabled, auth, controllability) are enforced upstream in
    * the API route; this only speaks to the broker. The panel echoes the new
    * relay state on its own topic, which flows back through the normal snapshot.
+   *
+   * The topic depends on the firmware: r202633+ made each circuit its own
+   * device with a `switch` node, so the command moved from
+   * `<prefix>/<panel>/<circuit>/relay/set` to
+   * `<prefix>/<circuit>/switch/relay/set`. Publishing to the old topic on new
+   * firmware is silently accepted by the broker and does nothing at all, so
+   * pick the form matching the device we actually learned this circuit from.
    */
   setRelay(circuitId: string, desired: "OPEN" | "CLOSED"): Promise<void> {
     const client = this.client;
@@ -181,7 +202,7 @@ export class MqttLiveSource implements LiveSource {
       return Promise.reject(new Error("MQTT not connected"));
     }
     const { topicPrefix: p, deviceId: d } = this.opts;
-    const topic = `${p}/${d}/${circuitId}/relay/set`;
+    const topic = relayCommandTopic(this.state, p, d, circuitId);
     return new Promise((resolve, reject) => {
       client.publish(topic, desired, { qos: 1 }, (err) => {
         if (err) {
