@@ -4,6 +4,7 @@ import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Wordmark } from "@/components/primitives";
 import { safeNextPath } from "@/lib/auth";
+import { clearPushDismissal } from "@/lib/client/push";
 
 function LoginForm() {
   const router = useRouter();
@@ -24,6 +25,8 @@ function LoginForm() {
         body: JSON.stringify({ password }),
       });
       if (res.ok) {
+        // A fresh sign-in gets the notifications offer again.
+        clearPushDismissal();
         router.replace(next);
         router.refresh();
         return;

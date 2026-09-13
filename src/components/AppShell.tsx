@@ -11,6 +11,7 @@ import {
 } from "./icons";
 import { Wordmark } from "./primitives";
 import { DataFreshnessBanner } from "./DataFreshnessBanner";
+import { NotificationsPrompt } from "./NotificationsPrompt";
 
 interface NavItem {
   href: string;
@@ -88,6 +89,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <DataFreshnessBanner />
+        <NotificationsPrompt />
         <main className="flex-1 px-4 pb-[calc(7rem+env(safe-area-inset-bottom))] pt-5 lg:px-8 lg:pt-8 lg:pb-10">{children}</main>
 
         {/* Mobile bottom nav */}
