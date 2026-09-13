@@ -19,6 +19,9 @@ export const metadata: Metadata = {
   description:
     "Real-time and historical energy monitoring for your home power panel.",
   applicationName: "Powerflow",
+  // Lets iOS run the home-screen save as a standalone web app, which is a
+  // prerequisite for push on iPhone.
+  appleWebApp: { capable: true, title: "Powerflow", statusBarStyle: "black-translucent" },
 };
 
 export const viewport: Viewport = {
