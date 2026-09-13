@@ -11,6 +11,16 @@ import type { LiveSnapshot } from "./types";
  * other node is a circuit (matching the collector's routing).
  */
 
+/**
+ * Nodes of the panel device itself. Anything else under the panel is treated as
+ * a circuit, so this list must stay complete: the panel's `status` node carries
+ * a `relay` property for the *main* relay, and omitting it puts the whole-panel
+ * disconnect into the per-circuit list as a breaker named "status".
+ *
+ * The first six are the pre-r202633 layout; the rest are the nodes that
+ * firmware exposes on the panel now that circuits have moved to their own
+ * devices.
+ */
 export const SYSTEM_NODES = new Set([
   "core",
   "lugs-upstream",
@@ -19,6 +29,14 @@ export const SYSTEM_NODES = new Set([
   "pcs",
   "bess",
   "unknown",
+  // r202633+ panel nodes
+  "info",
+  "door",
+  "status",
+  "meter",
+  "breaker",
+  "shed",
+  "shed-forecast",
 ]);
 
 export interface LiveState {
@@ -35,6 +53,19 @@ export interface LiveState {
    * `$description`). Authoritative source for whether control is even allowed.
    */
   circuitSettable: Map<string, boolean>;
+  /**
+   * circuitId → the panel's live `switch/relay-controllable` value. Where
+   * `settable` is a static schema fact, this is the panel's runtime answer to
+   * "may this relay be operated right now", so control requires both.
+   */
+  circuitControllable: Map<string, boolean>;
+  /**
+   * Child device id → its declared Homie type ("circuit", "lugs", "bess",
+   * "mid"). Firmware r202633+ publishes each of these as its own device, and
+   * the type is what says which state a message belongs in — mirroring the
+   * collector's routing rather than guessing from the device id's shape.
+   */
+  childTypes: Map<string, string>;
 }
 
 export function emptyLiveState(): LiveState {
@@ -44,6 +75,8 @@ export function emptyLiveState(): LiveState {
     circuitWatts: new Map(),
     circuitRelay: new Map(),
     circuitSettable: new Map(),
+    circuitControllable: new Map(),
+    childTypes: new Map(),
   };
 }
 
@@ -73,6 +106,133 @@ export function applyDescription(state: LiveState, payload: string): boolean {
   return changed;
 }
 
+/** Vendor namespace on every Homie device type, e.g. energy.ebus.device.circuit. */
+const CHILD_TYPE_PREFIX = "energy.ebus.device.";
+
+/**
+ * Fold a *child* device's `$description` into state (firmware r202633+).
+ *
+ * Records the device's declared type, which is what routes its later messages,
+ * and for a circuit records whether SPAN marks its relay settable. Under this
+ * firmware the panel's own `$description` no longer lists circuits at all, so
+ * this is the only place `circuitSettable` can come from — without it every
+ * breaker reads as uncontrollable and the control UI is dead.
+ */
+export function applyChildDescription(
+  state: LiveState,
+  deviceId: string,
+  payload: string,
+): boolean {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(payload);
+  } catch {
+    return false;
+  }
+  const d = doc as {
+    type?: unknown;
+    nodes?: Record<string, { properties?: Record<string, { settable?: unknown }> }>;
+  };
+  if (typeof d?.type !== "string" || !d.type.startsWith(CHILD_TYPE_PREFIX)) return false;
+
+  const type = d.type.slice(CHILD_TYPE_PREFIX.length);
+  state.childTypes.set(deviceId, type);
+
+  if (type === "circuit") {
+    const relay = d.nodes?.switch?.properties?.relay;
+    state.circuitSettable.set(deviceId, relay?.settable === true);
+  }
+  return true;
+}
+
+/**
+ * Fold one child-device message into state. `rest` is the topic with the shared
+ * prefix stripped, i.e. `<deviceId>/<node>/<property>`.
+ *
+ * Messages arriving before that device's `$description` are ignored rather than
+ * guessed at: an unknown type could put a whole-house lugs reading into the
+ * per-circuit map. Descriptions are retained, so they arrive first on connect.
+ */
+export function applyChildMessage(state: LiveState, rest: string, payload: string): boolean {
+  const firstSlash = rest.indexOf("/");
+  if (firstSlash <= 0) return false;
+  const deviceId = rest.slice(0, firstSlash);
+  const sub = rest.slice(firstSlash + 1);
+
+  if (sub === "$description") return applyChildDescription(state, deviceId, payload);
+  if (sub.startsWith("$")) return false;
+
+  const slash = sub.indexOf("/");
+  if (slash < 0) return false;
+  const node = sub.slice(0, slash);
+  const property = sub.slice(slash + 1);
+  if (!property || property.startsWith("$") || property.includes("/")) return false;
+
+  const type = state.childTypes.get(deviceId);
+  if (!type) return false;
+
+  if (type === "circuit") {
+    if (node === "meter" && property === "active-power") {
+      const v = num(payload);
+      if (v === null) return false;
+      // active-power is negative for consumption; negate to a positive draw.
+      state.circuitWatts.set(deviceId, Math.round(-v));
+      return true;
+    }
+    if (node === "switch" && property === "relay") {
+      state.circuitRelay.set(deviceId, payload.toUpperCase());
+      return true;
+    }
+    if (node === "switch" && property === "relay-controllable") {
+      state.circuitControllable.set(deviceId, payload === "true" || payload === "1");
+      return true;
+    }
+    return false;
+  }
+
+  if (type === "bess") {
+    if (node === "soc" && (property === "soc" || property === "soe")) {
+      const v = num(payload);
+      if (v === null) return false;
+      state.bess[property] = v;
+      return true;
+    }
+    if (node === "status" && property === "communication-state") {
+      state.bess.communication_state = payload;
+      return true;
+    }
+    return false;
+  }
+
+  if (type === "mid" && node === "grid" && property === "islanding-state") {
+    state.bess.islanding_state = payload;
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * The Homie topic that operates a circuit's relay.
+ *
+ * r202633+ circuits are their own device with a `switch` node
+ * (`<prefix>/<circuit>/switch/relay/set`); before that they were nodes of the
+ * panel (`<prefix>/<panel>/<circuit>/relay/set`). We know which because a
+ * circuit only lands in `childTypes` via its own `$description`. Getting this
+ * wrong is silent — the broker accepts a publish to a topic nothing is
+ * listening on and the breaker simply never moves.
+ */
+export function relayCommandTopic(
+  state: LiveState,
+  prefix: string,
+  deviceId: string,
+  circuitId: string,
+): string {
+  return state.childTypes.get(circuitId) === "circuit"
+    ? `${prefix}/${circuitId}/switch/relay/set`
+    : `${prefix}/${deviceId}/${circuitId}/relay/set`;
+}
+
 /** True once all four flow channels have been seen (avoids a partial frame). */
 export function isFlowReady(state: LiveState): boolean {
   const f = state.flow;
@@ -91,7 +251,14 @@ export function applyMessage(
   payload: string,
 ): boolean {
   const base = `${prefix}/${deviceId}/`;
-  if (!topic.startsWith(base)) return false;
+  if (!topic.startsWith(base)) {
+    // Firmware r202633+ publishes circuits, the lugs meters, the BESS and the
+    // MID as sibling devices under the same prefix rather than as nodes of the
+    // panel. Those are the only other topics we subscribe to.
+    const shared = `${prefix}/`;
+    if (!topic.startsWith(shared)) return false;
+    return applyChildMessage(state, topic.slice(shared.length), payload);
+  }
   const rest = topic.slice(base.length);
   // The device-level description carries per-circuit settable flags.
   if (rest === "$description") return applyDescription(state, payload);
@@ -167,10 +334,22 @@ export function buildSnapshot(
       soe: state.bess.soe,
       grid_state: state.bess.grid_state,
       connected: state.bess.connected,
+      // r202633+ replacements — transform prefers these when present.
+      communication_state: state.bess.communication_state,
+      islanding_state: state.bess.islanding_state,
     },
   );
 
-  const ids = new Set<string>([...state.circuitWatts.keys(), ...meta.keys()]);
+  // Every circuit we know of from any source. Keying only off circuitWatts
+  // would drop a circuit that has published its relay state but not yet a
+  // power reading — it would silently vanish from the list rather than show
+  // as idle.
+  const ids = new Set<string>([
+    ...state.circuitWatts.keys(),
+    ...state.circuitRelay.keys(),
+    ...state.circuitSettable.keys(),
+    ...meta.keys(),
+  ]);
   const circuits: Circuit[] = [...ids]
     .map((id) => {
       const m = meta.get(id);
@@ -178,7 +357,14 @@ export function buildSnapshot(
       const alwaysOn = m?.alwaysOn ?? false;
       // SPAN-authoritative, default-deny: controllable only when the panel
       // marks the relay settable AND the circuit is not always-on.
-      const settable = state.circuitSettable.get(id) ?? false;
+      //
+      // r202633+ adds a live `switch/relay-controllable` on top of the static
+      // `settable` schema flag — the panel's runtime answer to "may this be
+      // operated right now". Require both when we have both; a circuit that
+      // has published neither stays uncontrollable.
+      const liveControllable = state.circuitControllable.get(id);
+      const settable =
+        (state.circuitSettable.get(id) ?? false) && (liveControllable ?? true);
       return {
         id,
         name: m?.name ?? id,

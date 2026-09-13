@@ -2,6 +2,7 @@ package main
 
 import (
 	"log/slog"
+	"strings"
 	"time"
 )
 
@@ -107,21 +108,42 @@ func (t *EnergyTracker) Process(state *State) []EnergyDelta {
 			continue
 		}
 
-		// Classify node
+		// Classify node. A child device's declared Homie type wins: firmware
+		// r202633+ publishes the whole-house lugs meters as their own devices,
+		// and without this they match neither energyNodeInfo nor knownNodes and
+		// fall through to "circuit" — putting the sum of the entire house into
+		// the per-circuit breakdown, where it dwarfs every real breaker.
 		var nodeType, name string
-		if info, ok := energyNodeInfo[nodeID]; ok {
-			nodeType = info.nodeType
-			name = info.name
-		} else if _, isSystem := knownNodes[nodeID]; !isSystem {
+		switch state.ChildType(nodeID) {
+		case "circuit":
 			nodeType = "circuit"
 			name = nodeID
-			if n, ok := props["name"]; ok {
-				if s, ok := n.(string); ok && s != "" {
-					name = s
-				}
+			if s, ok := props["name"].(string); ok && s != "" {
+				name = s
 			}
-		} else {
-			continue
+		case "lugs":
+			// The device's own info/direction says which side it measures.
+			d, ok := props["direction"].(string)
+			if !ok || d == "" {
+				continue
+			}
+			nodeType = strings.ToLower(d)
+			name = nodeType
+		default:
+			if info, ok := energyNodeInfo[nodeID]; ok {
+				nodeType = info.nodeType
+				name = info.name
+			} else if _, isSystem := knownNodes[nodeID]; !isSystem {
+				nodeType = "circuit"
+				name = nodeID
+				if n, ok := props["name"]; ok {
+					if s, ok := n.(string); ok && s != "" {
+						name = s
+					}
+				}
+			} else {
+				continue
+			}
 		}
 
 		// Use the MQTT arrival time for this node, not time.Now()

@@ -91,6 +91,13 @@ type State struct {
 	// without sleeping. Defaults to time.Now in NewState.
 	nowFn func() time.Time
 
+	// childTypes maps a child device ID to its short device type, taken from
+	// that device's own $description "type" field (see SetChildDescription).
+	// Firmware r202633+ publishes circuits, the lugs meters, the BESS and the
+	// MID as independent Homie 5 devices; this is the authoritative
+	// discriminator for routing each one to the right QuestDB table.
+	childTypes map[string]string
+
 	// Pending buffer: property updates that arrived before $description.
 	// On a fresh connection, Homie 5 retained messages can land in any
 	// order, and parseInfer's type guess for an early property write would
@@ -125,8 +132,57 @@ func NewState(deviceID string, logger *slog.Logger, readinessGrace time.Duration
 		propCounts:     make(map[string]map[string]int),
 		readinessGrace: readinessGrace,
 		nowFn:          time.Now,
+		childTypes:     make(map[string]string),
 		logger:         logger.With("component", "state"),
 	}
+}
+
+// childTypePrefix is the vendor namespace every Homie device type carries,
+// e.g. "energy.ebus.device.circuit". Only the final segment is retained.
+const childTypePrefix = "energy.ebus.device."
+
+// SetChildDescription records a child device's type from its own $description
+// and returns it. Firmware r202633+ publishes each circuit, the two lugs
+// meters, the BESS and the MID as separate Homie 5 devices; the declared
+// "type" is the only reliable way to tell them apart. Matching on the shape of
+// the device ID instead silently misroutes anything SPAN adds later — which is
+// exactly how the whole-panel lugs meters ended up being recorded as household
+// circuits.
+//
+// Unparseable payloads and types outside the expected namespace are recorded
+// as "" so routing falls back to unknown_topics rather than guessing a table.
+func (s *State) SetChildDescription(deviceID string, data []byte) string {
+	var desc DeviceDescription
+	if err := json.Unmarshal(data, &desc); err != nil {
+		s.logger.Warn("failed to parse child $description", "device", deviceID, "error", err)
+		return ""
+	}
+
+	short := strings.TrimPrefix(desc.Type, childTypePrefix)
+	if short == desc.Type {
+		s.logger.Warn("child device type outside the expected namespace; routing to unknown_topics",
+			"device", deviceID, "type", desc.Type)
+		short = ""
+	}
+
+	s.mu.Lock()
+	prev, existed := s.childTypes[deviceID]
+	s.childTypes[deviceID] = short
+	s.mu.Unlock()
+
+	if !existed || prev != short {
+		s.logger.Info("child device registered",
+			"device", deviceID, "type", short, "nodes", len(desc.Nodes))
+	}
+	return short
+}
+
+// ChildType returns the device type recorded by SetChildDescription, or "" if
+// this device has not published a $description we could parse.
+func (s *State) ChildType(deviceID string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.childTypes[deviceID]
 }
 
 // SetDescription parses and stores the Homie $description payload, then

@@ -87,6 +87,11 @@ export function latestDeviceSql(): string {
  * check would miss a per-table failure like the circuits outage. `panel_bess`
  * is deliberately excluded: it updates only every few minutes and would
  * false-trip a one-minute staleness check.
+ *
+ * `panel_core` and `panel_lugs` stay in this list. Firmware r202633+ moved the
+ * panel scalars and the lugs meters onto their own Homie devices rather than
+ * dropping them, so a stale reading here means the collector has stopped
+ * routing those devices — exactly the failure this check exists to catch.
  */
 export const FRESHNESS_TABLES = [
   "power_usage",
@@ -119,7 +124,18 @@ export function latestFlowSql(deviceId: string | null): string {
 /** Latest battery state. */
 export function latestBatterySql(deviceId: string | null): string {
   const w = where([deviceEq(deviceId)]);
-  return `SELECT ts, soc, soe, grid_state, connected FROM panel_bess ${w} LATEST ON ts PARTITION BY device_id`.trim();
+  // `connected` and `grid_state` are pre-r202633 columns that nothing writes
+  // any more: the battery is now its own Homie device publishing
+  // status/communication-state, and grid state moved to the MID device's
+  // grid/islanding-state. `connected` is especially misleading — QuestDB
+  // BOOLEAN cannot be NULL, so an unwritten column reads `false`, which the UI
+  // rendered as a disconnected battery. Both are still selected so a panel on
+  // older firmware keeps working; transform.ts prefers the new columns and
+  // falls back to these.
+  return (
+    `SELECT ts, soc, soe, grid_state, connected, communication_state, islanding_state ` +
+    `FROM panel_bess ${w} LATEST ON ts PARTITION BY device_id`
+  ).trim();
 }
 
 /** Latest state of every circuit, ordered by current draw (descending). */

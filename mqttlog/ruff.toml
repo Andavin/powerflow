@@ -1,0 +1,16 @@
+# Lint config for the mqttlog scripts. Run: ruff check . && ruff format --check .
+target-version = "py311"
+line-length = 110
+
+[lint]
+select = ["E", "F", "W", "B", "UP", "SIM", "C4", "I"]
+ignore = [
+  # timezone.utc keeps these scripts runnable on interpreters older than the
+  # 3.13 image, which matters for replay.py: it is a recovery tool that may be
+  # run from whatever host is available during an incident.
+  "UP017",
+]
+
+[lint.isort]
+# The scripts are imported by name from the same directory (see conftest.py).
+known-first-party = ["mqttlog", "replay"]

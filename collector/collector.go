@@ -15,18 +15,22 @@ import (
 // cert daily and force-disconnects all clients, requiring re-subscribe
 // since CleanSession=true means the broker forgets subscriptions on drop).
 type Collector struct {
-	state     *State
-	topicBase string // e.g. "ebus/5/<panel-serial>/"
-	logger    *slog.Logger
-	onUpdate  func(UpdateResult) // called after each state update when ready
+	state       *State
+	topicBase   string // e.g. "ebus/5/<panel-serial>/" — panel device prefix
+	topicParent string // e.g. "ebus/5/"               — broker-wide prefix
+	deviceID    string // panel serial, to skip panel topics in child handler
+	logger      *slog.Logger
+	onUpdate    func(UpdateResult) // called after each state update when ready
 }
 
 func NewCollector(state *State, cfg SpanConfig, logger *slog.Logger, onUpdate func(UpdateResult)) *Collector {
 	return &Collector{
-		state:     state,
-		topicBase: cfg.TopicBase(),
-		logger:    logger.With("component", "collector"),
-		onUpdate:  onUpdate,
+		state:       state,
+		topicBase:   cfg.TopicBase(),
+		topicParent: cfg.TopicPrefix + "/",
+		deviceID:    cfg.DeviceID,
+		logger:      logger.With("component", "collector"),
+		onUpdate:    onUpdate,
 	}
 }
 
@@ -80,6 +84,118 @@ func parseTopic(topicBase, fullTopic string) topicResult {
 	return topicResult{Node: node, Property: property}
 }
 
+// flatChildProp maps a child device's Homie sub-node/property pair to the flat
+// property name the QuestDB schema and energy tracker expect.
+//
+// Only circuits need per-node prefixing: they carry seven sub-nodes whose
+// properties historically had distinct prefixed column names. The lugs, BESS
+// and MID devices each have a handful of sub-nodes whose property names are
+// already unique within the device and already match their historical columns,
+// so those pass through unchanged (meter/active-power → active_power,
+// soc/soe → soe, grid/grid-state → grid_state).
+func flatChildProp(devType, node, property string) string {
+	if devType == "circuit" {
+		return flatCircuitProp(node, property)
+	}
+	return property
+}
+
+// flatCircuitProp maps a Homie 5 circuit device's sub-node/property pair to a
+// flat property name compatible with the circuits table and energy tracker.
+//
+// Firmware r202633+ promotes each breaker from a nested node within the panel
+// device to its own Homie 5 device with sub-nodes (meter, info, switch,
+// breaker, load-shed, pcs, connection). This function restores the flat names
+// the earlier firmware published directly on the circuit node, preserving
+// backward compatibility with existing QuestDB columns and the energy tracker's
+// "imported-energy", "exported-energy", and "breaker-rating" lookups.
+func flatCircuitProp(node, property string) string {
+	switch node {
+	case "meter", "info", "switch":
+		// Primary nodes: property names are unique across nodes, use as-is.
+		return property
+	case "breaker":
+		// "rating" → "breaker-rating" matches EnergyTracker's ceiling lookup.
+		return "breaker-" + property
+	case "load-shed":
+		if property == "priority" {
+			return "shed-priority"
+		}
+		return "shed-" + property
+	case "pcs":
+		return "pcs-" + property
+	case "connection":
+		return "connection-" + property
+	}
+	return node + "-" + property
+}
+
+// handleChildDeviceTopic processes MQTT topics for circuit devices published
+// under the shared topic prefix but outside the panel device's own path.
+// Firmware r202633+ publishes each breaker as its own Homie 5 device at
+// "<prefix>/<circuit-uuid>/<node>/<property>" rather than as a node within
+// the panel device. This method routes those messages into State as flat
+// circuit node updates so the rest of the pipeline is unchanged.
+func (c *Collector) handleChildDeviceTopic(topic string, payload []byte) {
+	if !strings.HasPrefix(topic, c.topicParent) {
+		return
+	}
+	rest := topic[len(c.topicParent):]
+
+	firstSlash := strings.IndexByte(rest, '/')
+	if firstSlash < 0 {
+		return
+	}
+	deviceUUID := rest[:firstSlash]
+	if deviceUUID == "" || deviceUUID == c.deviceID {
+		// A "+" wildcard matches a zero-length level, so an empty device ID is
+		// reachable; it would otherwise be written as an empty node_id symbol.
+		return
+	}
+	subpath := rest[firstSlash+1:]
+
+	// A child device's own $description declares its type, which is what routes
+	// it to the right table. Without this the panel's whole-house lugs meters
+	// and the BESS are indistinguishable from a household circuit.
+	if subpath == "$description" {
+		c.state.SetChildDescription(deviceUUID, payload)
+		return
+	}
+
+	// Skip the remaining Homie system topics ($state, $nodes, ...)
+	if strings.HasPrefix(subpath, "$") {
+		return
+	}
+
+	// Expect exactly <node>/<property>
+	slash := strings.IndexByte(subpath, '/')
+	if slash < 0 {
+		return
+	}
+	node := subpath[:slash]
+	property := subpath[slash+1:]
+
+	// Drop nested sub-topics ("<node>/<property>/set") and attribute topics ("<node>/$name")
+	if strings.ContainsRune(property, '/') || strings.HasPrefix(property, "$") {
+		return
+	}
+
+	flatProp := flatChildProp(c.state.ChildType(deviceUUID), node, property)
+	ur := c.state.Update(deviceUUID, flatProp, payload)
+
+	if c.onUpdate != nil && ur.Ready {
+		c.onUpdate(ur)
+	}
+
+	c.logger.Debug("child device updated",
+		"device", deviceUUID,
+		"node", node,
+		"property", property,
+		"flat", flatProp,
+		"value", string(payload),
+	)
+}
+
 // OnMessage is the Paho MessageHandler. It's exported so it can be passed
 // to createMQTTClient as the client's default publish handler.
 func (c *Collector) OnMessage(_ mqtt.Client, msg mqtt.Message) {
@@ -89,7 +205,9 @@ func (c *Collector) OnMessage(_ mqtt.Client, msg mqtt.Message) {
 	tr := parseTopic(c.topicBase, topic)
 
 	if tr.NoPrefix || tr.Ignored || tr.NoSlash {
-		if tr.NoSlash {
+		if tr.NoPrefix {
+			c.handleChildDeviceTopic(topic, payload)
+		} else if tr.NoSlash {
 			c.logger.Debug("skipping non-property topic", "suffix", topic[len(c.topicBase):])
 		}
 		return

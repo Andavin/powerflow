@@ -320,9 +320,47 @@ func (q *QuestDBWriter) execHTTP(query string) error {
 	return nil
 }
 
-// WriteNodeUpdate writes a single node's data to the ILP buffer,
-// routing it to the correct table based on nodeID and isDescribed.
-func (q *QuestDBWriter) WriteNodeUpdate(nodeID string, props map[string]interface{}, ts time.Time, isDescribed bool) {
+// WriteNodeUpdate writes a single node's data to the ILP buffer, routing it to
+// the correct table.
+//
+// devType is the child device's declared Homie type (see
+// State.SetChildDescription) and is empty for the panel's own nodes. Firmware
+// r202633+ publishes circuits, the two lugs meters, the BESS and the MID as
+// independent devices, so the declared type — not the shape of the device ID —
+// decides the destination. A child device whose $description has not arrived
+// yet has devType "" and goes to unknown_topics rather than being guessed into
+// a table it does not belong in.
+func (q *QuestDBWriter) WriteNodeUpdate(nodeID string, props map[string]interface{}, ts time.Time, isDescribed bool, devType string) {
+	switch devType {
+	case "circuit":
+		q.writeRow("circuits", map[string]string{"circuit_id": nodeID}, props, ts)
+		return
+
+	case "lugs":
+		// "direction" is panel_lugs' partition tag (DEDUP key is ts, device_id,
+		// direction), so it must be emitted as a symbol and removed from the
+		// fields — an ILP line carrying it as both is rejected outright.
+		extras := map[string]string{"direction": "unknown"}
+		if s, ok := props["direction"].(string); ok && s != "" {
+			extras["direction"] = strings.ToLower(s)
+		}
+		fields := make(map[string]interface{}, len(props))
+		for k, v := range props {
+			if k != "direction" {
+				fields[k] = v
+			}
+		}
+		q.writeRow("panel_lugs", extras, fields, ts)
+		return
+
+	case "bess", "mid":
+		// The MID carries grid-state/islanding-state, which lived on panel_bess
+		// before the firmware split them onto their own device. Routing both
+		// here keeps the panel_bess columns the web app reads populated.
+		q.writeRow("panel_bess", nil, props, ts)
+		return
+	}
+
 	if table, ok := nodeTableMap[nodeID]; ok {
 		extras := map[string]string{}
 		switch nodeID {
@@ -333,8 +371,11 @@ func (q *QuestDBWriter) WriteNodeUpdate(nodeID string, props map[string]interfac
 		}
 		q.writeRow(table, extras, props, ts)
 	} else if isDescribed {
-		extras := map[string]string{"circuit_id": nodeID}
-		q.writeRow("circuits", extras, props, ts)
+		// Declared in the panel's own $description but with no explicit table:
+		// these are panel-level scalars (info, status, door, meter, breaker,
+		// shed, shed-forecast). panel_core is what holds those; routing them to
+		// circuits lists the panel itself as a household breaker.
+		q.writeRow("panel_core", nil, props, ts)
 	} else {
 		q.writeUnknownNode(nodeID, props, ts)
 	}

@@ -46,6 +46,24 @@ function reqStr(value: unknown, field: string): string {
 export const BATTERY_USABLE_KWH = 13.5;
 
 /**
+ * Whether the battery is reachable.
+ *
+ * Firmware r202633+ moved the battery onto its own Homie device, which reports
+ * `status/communication-state` and no longer publishes the old `connected`
+ * flag. That matters more than it sounds: QuestDB BOOLEAN columns cannot hold
+ * NULL, so the now-unwritten `connected` column reads `false` on every row and
+ * would otherwise render a perfectly healthy Powerwall as disconnected.
+ *
+ * So prefer communication-state, and only fall back to `connected` on a panel
+ * old enough to still publish it (identified by having no comms state at all).
+ */
+export function batteryConnected(battery: Row): boolean | null {
+  const comms = str(battery.communication_state);
+  if (comms !== null && comms !== "") return comms.toUpperCase() === "OK";
+  return battery.connected !== undefined ? Boolean(battery.connected) : null;
+}
+
+/**
  * Battery percentage the SPAN way: state-of-energy over usable capacity.
  * Falls back to the raw `soc` field when soe is unavailable.
  */
@@ -79,11 +97,12 @@ export function toFlowSnapshot(flow: Row, battery?: Row | null): FlowSnapshot {
       battery ? num(battery.soe) : null,
       battery ? num(battery.soc) : null,
     ),
-    gridState: battery ? str(battery.grid_state) : null,
-    batteryConnected:
-      battery && battery.connected !== undefined
-        ? Boolean(battery.connected)
-        : null,
+    gridState: battery
+      ? // r202633+ reports this as the MID's islanding-state; grid_state is
+        // the pre-OTA column, kept as a fallback for older firmware.
+        (str(battery.islanding_state) ?? str(battery.grid_state))
+      : null,
+    batteryConnected: battery ? batteryConnected(battery) : null,
   };
 }
 

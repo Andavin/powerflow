@@ -1,34 +1,31 @@
-name: Publish Docker image
+name: Publish mqttlog image
 
-# Build the Powerflow image and publish it to GitHub Container Registry.
+# Build the rolling MQTT raw-data logger image and publish it to GitHub
+# Container Registry as <repo>-mqttlog (ghcr.io/andavin/powerflow-mqttlog).
 #
-# Versioning is driven by package.json's "version" field — the single source
-# of truth — not by git tags, so the image version can never drift from the
-# app version:
+# Versioning mirrors the web and collector images: the single source of truth
+# is `__version__` in mqttlog/mqttlog.py — not git tags — so the image tag can
+# never drift from what the process reports:
 #   - push to main   -> :<version>, :<major.minor>, :latest, :edge, :sha-<short>
 #   - pull request    -> build only (no push); validates the Dockerfile
 #
-# To release: bump "version" in package.json and merge to main. The immutable
-# per-commit :sha-<short> tag always pins an exact build; the :<version> and
-# :latest tags float to the newest build of that version.
+# To release: bump `__version__` in mqttlog/mqttlog.py and merge to main.
 #
-# Actions are pinned to commit SHAs (with the human-readable version alongside)
-# for supply-chain integrity; Dependabot keeps them current (.github/dependabot.yml).
+# Scoped to mqttlog/** so a web- or collector-only change doesn't rebuild this
+# image (both of those workflows ignore mqttlog/**). Actions are pinned to
+# commit SHAs; Dependabot keeps them current (.github/dependabot.yml).
 
 on:
   push:
     branches: [main]
-    # The Go collector (collector/) and the raw MQTT logger (mqttlog/) each
-    # have their own CI and image; a change to either shouldn't rebuild the
-    # web image.
-    paths-ignore:
-      - "collector/**"
+    paths:
       - "mqttlog/**"
+      - ".github/workflows/mqttlog-publish.yml"
   pull_request:
     branches: [main]
-    paths-ignore:
-      - "collector/**"
+    paths:
       - "mqttlog/**"
+      - ".github/workflows/mqttlog-publish.yml"
   workflow_dispatch:
 
 env:
@@ -36,7 +33,7 @@ env:
 
 concurrency:
   # Don't let two pushes to the same ref build/push on top of each other.
-  group: docker-${{ github.ref }}
+  group: mqttlog-docker-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -52,16 +49,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # GHCR requires a lowercase image path; the owner (Andavin) isn't.
+      # GHCR requires a lowercase image path; the owner (Andavin) isn't. The
+      # "-mqttlog" suffix distinguishes it from the web and collector images
+      # published from the same repository.
       - name: Compute image name
         id: image
-        run: echo "name=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+        run: echo "name=${GITHUB_REPOSITORY,,}-mqttlog" >> "$GITHUB_OUTPUT"
 
-      # package.json is the source of truth for the version tag.
-      - name: Read version from package.json
+      # mqttlog/mqttlog.py's `__version__` is the source of truth for the tag.
+      - name: Read version from mqttlog.py
         id: ver
+        working-directory: mqttlog
         run: |
-          v=$(jq -r .version package.json)
+          # Tolerant of quote style and surrounding whitespace.
+          v=$(sed -n 's/^__version__[[:space:]]*=[[:space:]]*["'"'"']\([^"'"'"']\+\)["'"'"'].*/\1/p' mqttlog.py)
+          if [ -z "$v" ]; then echo "could not parse __version__ from mqttlog.py" >&2; exit 1; fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
           echo "minor=${v%.*}" >> "$GITHUB_OUTPUT"
 
@@ -96,24 +98,26 @@ jobs:
             type=ref,event=pr
             type=sha,prefix=sha-
           labels: |
-            org.opencontainers.image.title=Powerflow
-            org.opencontainers.image.description=Real-time energy dashboard for a home power panel
+            org.opencontainers.image.title=Powerflow mqttlog
+            org.opencontainers.image.description=Rolling raw-MQTT logger keeping a replayable day of a SPAN panel's message stream
             org.opencontainers.image.version=${{ steps.ver.outputs.version }}
 
       - name: Build and push
         id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
-          context: .
+          # The logger (Dockerfile + sources) lives in mqttlog/.
+          context: mqttlog
           # Multi-arch only for real pushes/releases. On PRs we just validate
           # the build, so skip the slow emulated arm64 pass.
           platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Reuse layers across runs to keep rebuilds fast.
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Reuse layers across runs to keep rebuilds fast. A distinct scope
+          # keeps this cache from colliding with the other images'.
+          cache-from: type=gha,scope=mqttlog
+          cache-to: type=gha,mode=max,scope=mqttlog
           # Provenance is attached below via actions/attest-build-provenance (a
           # signed Sigstore attestation). Disable BuildKit's own inline
           # provenance so the pushed index stays a clean multi-arch manifest
