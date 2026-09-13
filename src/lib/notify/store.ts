@@ -66,3 +66,21 @@ export class SubscriptionStore {
     await rename(tmp, this.path);
   }
 }
+
+/**
+ * Validates a subscription posted by the browser. The endpoint is a URL the
+ * server will later make requests to, so it is not accepted blindly: https
+ * only, and both keys present.
+ */
+export function parseSubscription(input: unknown): Omit<PushSubscriptionRecord, "createdAt"> | null {
+  if (typeof input !== "object" || input === null) return null;
+  const { endpoint, p256dh, auth } = input as Record<string, unknown>;
+  if (typeof endpoint !== "string" || typeof p256dh !== "string" || typeof auth !== "string") return null;
+  if (!p256dh || !auth) return null;
+  try {
+    if (new URL(endpoint).protocol !== "https:") return null;
+  } catch {
+    return null;
+  }
+  return { endpoint, p256dh, auth };
+}

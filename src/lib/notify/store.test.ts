@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SubscriptionStore } from "./store";
+import { SubscriptionStore, parseSubscription } from "./store";
 
 let dir: string;
 beforeEach(() => {
@@ -64,5 +64,23 @@ describe("SubscriptionStore", () => {
     expect(await new SubscriptionStore(dir).list()).toEqual([]);
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+describe("parseSubscription", () => {
+  it("accepts the shape PushManager.subscribe() produces", () => {
+    expect(parseSubscription({ endpoint: "https://push.example/x", p256dh: "k", auth: "a" })).toEqual({
+      endpoint: "https://push.example/x",
+      p256dh: "k",
+      auth: "a",
+    });
+  });
+
+  it("rejects anything the server would later refuse to send to", () => {
+    expect(parseSubscription(null)).toBeNull();
+    expect(parseSubscription({ endpoint: "http://push.example/x", p256dh: "k", auth: "a" })).toBeNull();
+    expect(parseSubscription({ endpoint: "not a url", p256dh: "k", auth: "a" })).toBeNull();
+    expect(parseSubscription({ endpoint: "https://push.example/x", p256dh: "", auth: "a" })).toBeNull();
+    expect(parseSubscription({ endpoint: "https://push.example/x", p256dh: "k" })).toBeNull();
   });
 });
