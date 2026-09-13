@@ -103,3 +103,20 @@ powerflow:
     # Validate the broker cert against the CA above. The hostname check is
     # skipped in code when a CA is pinned, so this can stay true.
     reject_unauthorized: true
+  # Push notifications for the home-screen app (grid outage / restored, low
+  # battery, collector gone quiet / resumed). Off until both VAPID keys are
+  # set — generate a pair with `pnpm push:keygen` (or keep them in .env as
+  # POWERFLOW_VAPID_PUBLIC_KEY / POWERFLOW_VAPID_PRIVATE_KEY). Push only works
+  # over HTTPS; see README.
+  notify:
+    vapid_public_key: ""
+    vapid_private_key: ""
+    # Sender contact the push services (Apple/Google/Mozilla) may use.
+    vapid_subject: "mailto:admin@example.com"
+    # Where push-subscriptions.json lives (the compose stack mounts a volume here).
+    data_dir: "/data"
+    # Battery state of charge (%) that triggers "battery low"; 0 disables.
+    battery_low_percent: 20
+    # How long data must be stale before your phone is told the collector is
+    # down (the in-page banner still shows after one minute).
+    stale_after: "5m"

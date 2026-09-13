@@ -33,6 +33,9 @@ shallow historical views.
   state-of-charge overlay, grid import/export, and a per-circuit breakdown.
 - **Desktop dashboard** — multi-panel overview for large screens.
 - **Login** — signed-cookie sessions.
+- **Push notifications** — save the app to your phone's home screen and it
+  can tell you when grid power goes out (and comes back), when the battery
+  runs low, and when the collector stops writing.
 
 ## Tech
 
@@ -88,6 +91,11 @@ matching `config.yml` key:
 | `POWERFLOW_AUTH_DISABLED`   | `1` to bypass auth (tests / trusted LAN only)            |
 | `POWERFLOW_CONTROL_ENABLED` | `1` to enable breaker control; default `0` (read-only)   |
 | `POWERFLOW_MQTT_*`          | Broker URL / credentials / CA / topic prefix — else derived from `mqtt.*` |
+| `POWERFLOW_VAPID_PUBLIC_KEY` / `POWERFLOW_VAPID_PRIVATE_KEY` | Enables push notifications (`pnpm push:keygen`) |
+| `POWERFLOW_VAPID_SUBJECT`   | Sender contact for the push services (default `mailto:admin@example.com`) |
+| `POWERFLOW_DATA_DIR`        | Where push subscriptions are stored (default `/data`)    |
+| `POWERFLOW_BATTERY_LOW_PERCENT` | SOC that triggers "battery low" (default `20`; `0` disables) |
+| `POWERFLOW_STALE_AFTER`     | Stale-data patience before a "collector down" push (default `5m`) |
 
 ## Real-time transport
 
@@ -109,6 +117,42 @@ Stats and history always query QuestDB (they're historical), on demand.
 Breaker control, when enabled, publishes a relay command over the same MQTT
 connection; even then only circuits SPAN marks settable and not always-on can be
 toggled.
+
+## Push notifications
+
+Save Powerflow to your phone's home screen and it will offer to send
+notifications — a card appears after sign-in with a **Turn on** button.
+"Maybe later" hides it until the next sign-in. Once on, the card offers **Send a
+test** so you can see one arrive before an outage does it for real. Turning
+them off again is done in the phone's / browser's notification settings.
+
+What gets sent, all decided by a watcher that runs inside the web app whether
+or not a browser is open:
+
+| Event                    | When                                                        |
+| ------------------------ | ----------------------------------------------------------- |
+| Grid power out / back    | The panel reports it is off-grid (running on the battery), then on-grid again |
+| Battery low              | State of charge drops below `battery_low_percent` (default 20%); re-armed once it climbs 5 points clear |
+| Collector down / resumed | No new data for `stale_after` (default 5 minutes), or QuestDB unreachable; then data flows again |
+
+Setup: generate a VAPID key pair with `pnpm push:keygen` (or
+`npx web-push generate-vapid-keys`) and put it in `config.yml` under
+`powerflow.notify` or in `.env`. Subscriptions are stored as a small JSON file
+in the `powerflow-data` volume (`/data` in the container).
+
+Two things the browser insists on:
+
+- **HTTPS.** Service workers, and so push, only exist in a secure context —
+  plain `http://nas:3007` will never show the card. On a Tailnet, `tailscale
+  serve` in front of the app gives you a real certificate with no other setup.
+  On a self-signed certificate, Safari will register the worker but Chrome
+  refuses outright (it says so in the console), so push can look broken in one
+  browser and fine in the other on the same machine.
+- **On iPhone, the app must be on the home screen.** Safari tabs have no push;
+  the installed app does (iOS 16.4+).
+
+Note that a grid notification can only reach you if the machine running
+Powerflow, and your network, stay up during the outage.
 
 ## Develop
 
@@ -188,11 +232,13 @@ The rest of the tree is the Powerflow web app:
 ```
 src/lib/          config, types, time, sql, transform, questdb client, repository, auth, period, energy, palette
 src/lib/live/     MQTT + mock live sources and the shared snapshot state
+src/lib/notify/   push notifications: event wording, watch state machine, subscription store, sender, watcher
 src/app/api/      stats, circuit-stats, circuit-energy, circuits/[id]/relay,
-                  stream (SSE), login, logout, health
+                  stream (SSE), freshness, push/*, login, logout, health
 src/app/(main)/   authenticated pages (flow/dashboard, circuits, circuit detail, stats)
 src/components/   FlowDiagram, charts, screens, AppShell, primitives, PeriodControls
 e2e/              Playwright specs (mobile + desktop projects)
+public/sw.js      Service worker (push + notification click only; no fetch handler)
 ```
 
 ## License
