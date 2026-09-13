@@ -149,9 +149,8 @@ function pickNum(envVal: string | undefined, fileVal: number | undefined, fallba
 export function parseDurationMs(text: string, key: string): number {
   const m = /^(\d+)(ms|s|m|h)?$/.exec(text.trim());
   if (!m) throw new Error(`${key}: expected a duration like "5m" or "90s", got "${text}"`);
-  const n = Number(m[1]);
-  const unit = m[2] ?? "s";
-  return n * { ms: 1, s: 1000, m: 60_000, h: 3_600_000 }[unit]!;
+  const scale = { ms: 1, s: 1000, m: 60_000, h: 3_600_000 } as const;
+  return Number(m[1]) * scale[(m[2] ?? "s") as keyof typeof scale];
 }
 
 /** Derive the web app's MQTT url from the collector-shared host/port fields. */
