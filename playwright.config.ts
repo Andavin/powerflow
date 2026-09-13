@@ -39,6 +39,9 @@ export default defineConfig({
       PORT: String(PORT),
       POWERFLOW_DATA_MODE: "mock",
       POWERFLOW_AUTH_DISABLED: "1",
+      // Dummy VAPID pair so the notifications card is offered; specs never subscribe.
+      POWERFLOW_VAPID_PUBLIC_KEY: "e2e-public-key",
+      POWERFLOW_VAPID_PRIVATE_KEY: "e2e-private-key",
       NODE_ENV: "production",
     },
   },
