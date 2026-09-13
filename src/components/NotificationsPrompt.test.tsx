@@ -16,7 +16,7 @@ const registration = {
   },
 };
 const notification = { permission: "default" as NotificationPermission, requestPermission: vi.fn(async () => "granted") };
-const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ ok: true }) }));
+const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => ({ ok: true, json: async () => ({ ok: true }) }));
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -98,9 +98,9 @@ describe("NotificationsCard", () => {
     expect(registration.pushManager.subscribe).toHaveBeenCalledWith(
       expect.objectContaining({ userVisibleOnly: true, applicationServerKey: expect.any(Uint8Array) }),
     );
-    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("/api/push/subscribe");
-    expect(JSON.parse(String(init.body))).toEqual({ endpoint: "https://push.example/abc", p256dh: "P", auth: "A" });
+    expect(JSON.parse(String(init?.body))).toEqual({ endpoint: "https://push.example/abc", p256dh: "P", auth: "A" });
 
     fireEvent.click(screen.getByRole("button", { name: "Send a test" }));
     await flush();
