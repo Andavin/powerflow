@@ -23,13 +23,14 @@ export interface FreshnessResult {
  * every-cycle tables; `stale` once that is at least a minute old, or when the
  * database can't be reached at all. Never throws.
  */
-export async function checkFreshness(cfg: PowerflowConfig, now = Date.now()): Promise<FreshnessResult> {
+export async function checkFreshness(cfg: PowerflowConfig): Promise<FreshnessResult> {
   // No database in mock mode — nothing to watch, never stale.
   if (cfg.dataMode === "mock") return { stale: false, mock: true };
 
   try {
     const client = createQuestDbClient(cfg.questdbUrl);
     const rows = await client.query(freshnessSql());
+    const now = Date.now();
 
     let oldest: { table: string; ageMs: number } | null = null;
     for (const r of rows) {

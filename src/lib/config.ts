@@ -146,7 +146,7 @@ function pickNum(envVal: string | undefined, fileVal: number | undefined, fallba
  * bare integer is taken as seconds. Anything else is a hard error: this guards
  * a threshold, and a typo silently becoming "5 minutes" is worse than a crash.
  */
-export function parseDurationMs(text: string, key: string): number {
+function parseDurationMs(text: string, key: string): number {
   const m = /^(\d+)(ms|s|m|h)?$/.exec(text.trim());
   if (!m) throw new Error(`${key}: expected a duration like "5m" or "90s", got "${text}"`);
   const scale = { ms: 1, s: 1000, m: 60_000, h: 3_600_000 } as const;

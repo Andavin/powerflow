@@ -3,7 +3,7 @@ import { test, expect } from "@playwright/test";
 // The Playwright server runs with dummy VAPID keys (see playwright.config.ts),
 // so the app offers notifications; nothing here ever subscribes.
 
-test("install assets are served without a session", async ({ request }) => {
+test("serves the manifest, service worker, and icons", async ({ request }) => {
   const manifest = await request.get("/manifest.webmanifest");
   expect(manifest.ok()).toBe(true);
   const body = await manifest.json();

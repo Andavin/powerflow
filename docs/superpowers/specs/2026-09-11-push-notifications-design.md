@@ -1,7 +1,7 @@
 # Push notifications for the home-screen app
 
 **Date:** 2026-09-11
-**Status:** proposed
+**Status:** implemented (this PR)
 
 ## Goal
 
@@ -123,23 +123,26 @@ function observeSnapshot(state, snapshot: FlowSnapshot, now): NotifyEvent[]
 function observeFreshness(state, result: FreshnessResult, now, staleAfterMs): NotifyEvent[]
 ```
 
-Edge-triggered with hysteresis, and **primed by the first observation** so a
-restart during an outage does not re-announce it:
+Edge-triggered with hysteresis. Grid and battery are **primed by the first
+observation** so a restart during an outage does not re-announce it:
 
-- **Grid:** `gridState` is off-grid when it is non-null and does not contain
-  `ON_GRID` (SPAN reports e.g. `PANEL_ON_GRID` / `PANEL_OFF_GRID`; the exact
-  strings are matched case-insensitively on the `ON_GRID` substring so an
-  unknown variant errs toward "off-grid" only if it clearly isn't on-grid —
-  null/unknown never fires). `GRID_DOWN` once on the on→off transition,
-  `GRID_RESTORED` once on off→on.
+- **Grid:** only explicitly recognised strings count — `OFF_GRID` /
+  `GRID_DOWN` mean off, `ON_GRID` / `GRID_UP` mean on (case-insensitive
+  substrings, covering SPAN's `PANEL_ON_GRID` / `PANEL_OFF_GRID` and
+  `DSM_GRID_UP` / `DSM_GRID_DOWN`); null or anything else is ignored so a
+  firmware surprise can't raise a false alarm. `GRID_DOWN` once on the on→off
+  transition, `GRID_RESTORED` once on off→on.
 - **Battery:** `BATTERY_LOW` when SOC crosses from `>= threshold` to
   `< threshold`. Re-arms only once SOC climbs back to `>= threshold + 5`, so a
   battery hovering at the line does not nag. Threshold `0` disables.
 - **Data:** the freshness result is observed once a minute. `DATA_STALE` fires
-  when `stale` has been continuously true for at least `stale_after` (measured
-  from the first stale observation), once. `DATA_RESUMED` fires once when a
-  subsequent result is not stale, only if `DATA_STALE` had fired. In `mock`
-  mode freshness is never stale.
+  once when the reported age reaches `stale_after` (when the probe has no age
+  — QuestDB unreachable — the episode is timed from its first failure).
+  `DATA_RESUMED` fires once when a subsequent result is not stale, only if
+  `DATA_STALE` had fired. Deliberately *not* primed: the probe carries the real
+  age, so a restart during a long collector outage announces it once more —
+  the operator may have restarted the stack expecting that to fix it. In
+  `mock` mode freshness is never stale.
 
 All of this is a pure function of `(state, input, now)` and is unit-tested with
 fake time. `mock` data mode runs the watcher against the mock source, so the
@@ -188,7 +191,6 @@ All under the existing auth proxy (nothing is added to `PUBLIC_PATHS`).
 | --------------------------- | ---------------------------------------------------------- |
 | `GET  /api/push/config`     | `{ publicKey: string \| null }`                            |
 | `POST /api/push/subscribe`  | `{ endpoint, p256dh, auth }` → `{ ok: true }`; 400 on bad shape |
-| `DELETE /api/push/subscribe`| `{ endpoint }` → `{ ok: true }`                            |
 | `POST /api/push/test`       | sends the test payload to every subscription; `{ ok, sent }` — `sent: 0` is reported as a failure the UI can explain |
 
 Validation: `endpoint` must be an `https:` URL; `p256dh`/`auth` non-empty
@@ -261,17 +263,17 @@ accepted blindly.
   `config` parsing for the new keys; `NotificationsPrompt` with a stubbed
   `Notification`/`PushManager` (shows/hides on each condition, dismiss,
   turn-on flow, test button).
-- **E2E (Playwright, mock mode):** with a fake public key in the env, the
-  banner appears after login, "Maybe later" hides it, a reload keeps it
-  hidden, logging out and back in shows it again. `sw.js` and
-  `manifest.webmanifest` are fetchable without a session.
+- **E2E (Playwright, mock mode, auth disabled):** with a dummy key pair in the
+  env, the card appears, "Maybe later" hides it, and a reload keeps it hidden.
+  The manifest, `sw.js`, and icons are served. (Re-offer after login is
+  unit-tested; the e2e server has no login.)
 - **Manual:** real iPhone via Tailscale HTTPS; "send a test" arrives on the
   lock screen; pull the collector container → "collector down" within
   `stale_after`; restart → "data resumed".
 
 ## Files
 
-New: `src/instrumentation.ts`, `src/lib/notify/{events,watch,store,push,watcher}.ts` (+ tests),
+New: `src/instrumentation.ts`, `src/lib/notify/{events,watch,store,push,watcher,service}.ts` (+ tests),
 `src/lib/freshness.ts` (extracted from the route), `src/app/api/push/{config,subscribe,test}/route.ts`,
 `src/app/manifest.ts`, `public/sw.js`, `public/icon-{192,512,maskable-512}.png`,
 `src/lib/client/push.ts`, `src/components/NotificationsPrompt.tsx` (+ test),

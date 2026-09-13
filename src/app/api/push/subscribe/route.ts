@@ -20,14 +20,3 @@ export async function POST(request: NextRequest): Promise<Response> {
   return Response.json({ ok: true });
 }
 
-/**
- * Forgets a subscription.
- *   DELETE /api/push/subscribe   body: { endpoint }
- */
-export async function DELETE(request: NextRequest): Promise<Response> {
-  if (!(await isAuthenticated())) return jsonError("unauthorized", 401);
-  const body = (await request.json().catch(() => null)) as { endpoint?: unknown } | null;
-  if (typeof body?.endpoint !== "string" || !body.endpoint) return jsonError("Body must be { endpoint }", 400);
-  await getSubscriptionStore().remove(body.endpoint);
-  return Response.json({ ok: true });
-}

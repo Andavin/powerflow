@@ -1,6 +1,6 @@
 import type { FreshnessResult } from "../freshness";
 import type { LiveSource } from "../live/types";
-import { payloadFor, type PushPayload } from "./events";
+import { payloadFor, type NotifyEvent, type PushPayload } from "./events";
 import { newWatchState, observeFreshness, observeSnapshot, type WatchOptions } from "./watch";
 
 export interface WatcherDeps {
@@ -22,7 +22,7 @@ export interface WatcherDeps {
  */
 export function runWatcher(deps: WatcherDeps): () => void {
   const state = newWatchState();
-  const dispatch = (events: ReturnType<typeof observeSnapshot>) => {
+  const dispatch = (events: NotifyEvent[]) => {
     for (const event of events) void deps.send(payloadFor(event));
   };
 
