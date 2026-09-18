@@ -126,9 +126,14 @@ services:
       - path: .env
         required: false
     environment:
-      # ~25 hours at ~25 MB/hour, so roughly 640 MB on disk. Must be >= 1;
+      # ~72 hours at ~25 MB/hour, so roughly 1.8 GB on disk. Must be >= 1;
       # there is no "0 disables pruning" setting.
-      KEEP_HOURS: "25"
+      #
+      # Three days rather than one: an outage is only replayable while the raw
+      # log still covers it, and the 17 Sep link drop ran for 9h before anyone
+      # noticed. A 25-hour window leaves almost no margin to spot the gap, work
+      # out what is missing and replay it.
+      KEEP_HOURS: "72"
     extra_hosts:
       - "${PANEL_HOST:?set PANEL_HOST in .env}:${PANEL_IP:?set PANEL_IP in .env}"
     # Red when no data has been written recently, not merely when the process
